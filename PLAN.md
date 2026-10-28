@@ -263,13 +263,15 @@ bots feel like they think without making you wait for maths.
 
 The game ships on Vercel from the start; nothing in phases 0–8 needs a server.
 
-- **Project**: a new Vercel project in the `charliephu123` team (there isn't one for this repo
-  yet), connected to `charliephu123/dookie` through the Git integration. **Root Directory: `web`**,
-  framework preset Next.js, Node 22. The Python kit at the repo root is never built or deployed.
-- **Branches**: production deploys from `main`; every other branch and PR gets a preview URL.
-  The repo has no `main` yet (only `claude/focused-bell-1gjcyv`), so create it before
-  connecting the project. Previews are behind Vercel Authentication by default; turn that off
-  for previews, or use a share link, when showing them to people without a Vercel login.
+- **Project**: [`dookie`](https://vercel.com/charliephu123/dookie) in the `charliephu123` team,
+  connected to `charliephu123/dookie` through the Git integration. **Root Directory: `web`**
+  (the first deploy failed with `NEXT_NO_VERSION` until this was set), framework Next.js,
+  Node 24. The Python kit at the repo root is never built or deployed.
+- **Branches**: production deploys from the repo's default branch, which is currently
+  `claude/focused-bell-1gjcyv` because it's the only branch. Create `main`, make it the default
+  on GitHub and the production branch in Vercel, so work branches become previews. Vercel
+  Authentication is on (standard protection), so preview URLs need a Vercel login or a share
+  link to open.
 - **Ignored Build Step**: `git diff HEAD^ HEAD --quiet -- .` (run from `web/`), so commits that
   only touch the Python kit don't trigger a build.
 - **Everything prerenders as static**: the table, map and menus are client components on static
