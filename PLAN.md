@@ -1,103 +1,321 @@
 # ASCII Poker: plan
 
-A browser game on Vercel. You sit at a hold'em table against the bots from `pokerbot/`
-(AdaptiveBot with look-ahead, plus the sparring archetypes). It's drawn entirely in glyphs,
-in the style of Caves of Qud: a dark teal-black field, a saturated 18-colour palette, a
-message log in the game's voice, and creatures in place of players.
+A browser poker roguelite on Vercel, drawn entirely in glyphs in the style of Caves of Qud:
+a dark teal-black field, a saturated 18-colour palette, a message log in the game's voice,
+and creatures in place of players. You play hold'em (and stranger variants) against the bots
+from `pokerbot/`, which are ported to TypeScript and run in your browser.
+
+The style is inspired by Caves of Qud. Its name, creature names, place names and art belong
+to Freehold Games, so none of them ship in this game (see [Naming](#naming-and-ip)).
+
+## Where we are
+
+| # | Phase | Status |
+|---|---|---|
+| 0 | Scaffold Next.js app, palette, canvas glyph grid, static table mock | **done**: `npm run dev` shows the mock table |
+| 1 | Port cards, variant, evaluator | **done**: vitest passes, including exact parity with Python on 5,000 hands per variant |
+| 2 | Engine: seeded RNG, equity, step-driven table state machine | next |
+| 3+ | everything below | not started |
+
+What the phase 0 mock shows (screenshot taken from `npm run build && npm start`), and what
+needs fixing as we go:
+
+- Box borders (`║`) have gaps between rows, because the 1.45 line height is taller than the
+  font's glyph. Draw box-drawing characters as vector lines, the same way the canvas already
+  draws `░▒▓█` as filled rectangles.
+- The table's `▓▒░` rim reads as stair-stepped blocks rather than carved stone. Add a
+  per-cell colour jitter and a one-cell inner highlight.
+- Seat titles overlap the table rim ("the Bayesian Seer" runs into the stone at left).
+  Seat layout needs per-seat-count anchor tables, not a pure ellipse.
+- In the side panel, "folds to bet" runs into its stat bar. Shorten labels or widen the column.
+
+## The game, in one paragraph
+
+You are `@`, a wanderer with a stake. In **Quick Play** you sit at a table with the creatures
+you choose. In **The Pilgrimage** (the headline mode) you travel a glyph map from a salt-flat
+caravanserai down into the deep places. Each region deals a different variant, each table is
+a lineup of creatures with their own play styles, tells and moods, and between tables you
+trade winnings for relics that bend the rules in your favour. Go broke and the run ends with
+a tombstone and a chronicle of your most legendary hands. The Seer, a Bayesian creature with
+many eyes, remembers how you play between visits.
 
 ## Decisions
 
 | Question | Choice | Why |
 |---|---|---|
-| Where does the bot run? | **Ported to TypeScript, in the browser, inside a Web Worker** | No server round trips, so animations never wait on the network. Free static hosting. The Monte Carlo equity loop is faster in JS than in Python. The Worker keeps the frame rate smooth while bots think. |
-| Framework | **Next.js (App Router) + TypeScript** | Vercel-native, and room for server features later (leaderboard, shared replays) without a rewrite. v1 is fully static. |
+| Where does the bot run? | **Ported to TypeScript, in the browser, inside a Web Worker** | No server round trips, so animations never wait on the network. Free static hosting. The Monte Carlo loop is faster in JS than in Python. The Worker keeps the frame rate smooth while bots think. |
+| Framework | **Next.js (App Router) + TypeScript** | Vercel-native, and room for server features later (daily leaderboard, shared replays) without a rewrite. Everything up to phase 8 is fully static. |
 | Rendering | **One `<canvas>` glyph grid** (cells with glyph + fg + bg) plus a sprite layer for moving glyphs | Pixel-exact ASCII, cheap per-cell colour, and animation is just moving sprites between cells. |
-| Engine shape | **Step-driven state machine** (`start → awaitAction(p) → apply → …`), not a blocking loop | The UI has to pause for the human and for animations. The Python engine's `bot.act()` loop can't do that. |
-| Font | IBM Plex Mono (OFL) via `next/font`; maybe a CP437 bitmap font later | Legible at small sizes, free license. Not Qud's own font: we don't ship their assets. |
-| Name / branding | Working title "ascii-poker". **Not** "Caves of Qud" | The style is inspired by the game; its name and art belong to Freehold Games. |
-| Python | Stays as the reference implementation and the place to tune | TS parity tests are generated from Python, so the two can't drift silently. |
+| Menus and screens | **Drawn in glyphs too**, with a thin DOM layer underneath for buttons, focus and screen readers | Qud's menus are part of its look. The DOM layer keeps mobile and accessibility honest. |
+| Engine shape | **Pure, step-driven state machine**: `legalActions(state)`, `apply(state, action) → {state, events}` | The UI has to pause for the human and for animations. The Python engine's `bot.act()` loop can't do that. Pure functions make replays, undo-for-tests and property tests cheap. |
+| Randomness | **One seeded PRNG** (xoshiro128\*\*) split into named streams: `deck`, `bots`, `flavor`, `world` | Daily runs, reproducible bugs, and shareable replays that need no server. |
+| Replays | **Seed + action list**, not re-running bots | Bot Monte Carlo is nondeterministic across machines and versions; recorded actions are exact. |
+| Short all-in raises | **Real rule** in the TS engine (a short all-in does not reopen betting), behind a `shortAllInReopens` flag that parity tests set to `true` to match Python | Humans notice wrong rules; parity tests still line up. |
+| Font | IBM Plex Mono (OFL) via `next/font` by default; optional CP437 bitmap font in settings | Legible at small sizes, free licence. Not Qud's own font. |
+| Audio | **Synthesised with WebAudio**, no audio files | Fits the lo-fi look, zero asset licensing, tiny bundle. |
+| Persistence | `localStorage`, versioned with migrations | Chips, settings, relics, run state, the Seer's model of you, hand history. |
+| Python | Stays the reference implementation and the place to tune | TS parity fixtures are generated from Python, so the two can't drift silently. |
+
+## Modes
+
+| Mode | What it is | Phase |
+|---|---|---|
+| **Quick Play** | One cash table. Choose variant, table size (2–8), blinds, stack and opponents. Rebuys allowed. | 4 |
+| **Duel with the Seer** | Heads-up against AdaptiveBot. Its model of you persists between visits and its read is shown live. | 4 |
+| **Sit & Go** | Single-table tournament with rising blinds; last creature standing. | 7 |
+| **The Pilgrimage** | Roguelite run across a glyph map: regions, creatures, relics, bosses, permadeath. | 7 |
+| **Daily Pilgrimage** | Same seed for everyone that day; one attempt; share a glyph result string. | 8 |
+| **Replay Theatre** | Step through any saved hand with all cards face up; share a replay as a URL. | 8 |
+| **Lessons from the Seer** | After a hand, see what AdaptiveBot would have done at each of your decisions and why. | 8 |
 
 ## Look and feel
 
-- **Palette** (Qud-like): black `#0f3b3a`, dark grey `#155352`, grey `#b1c9c3`, white
-  `#ffffff`, dark red `#a64a2e`, red `#d74200`, dark orange `#f15f22`, orange `#e99f10`,
-  brown `#98875f`, gold `#cfc041`, dark green `#009403`, green `#00c420`, dark cyan
+- **Palette** (Qud-like, in `render/palette.ts`): black `#0f3b3a`, dark grey `#155352`, grey
+  `#b1c9c3`, white `#ffffff`, dark red `#a64a2e`, red `#d74200`, dark orange `#f15f22`, orange
+  `#e99f10`, brown `#98875f`, gold `#cfc041`, dark green `#009403`, green `#00c420`, dark cyan
   `#40a4b9`, cyan `#77bfcf`, dark blue `#0048bd`, blue `#0096ff`, dark magenta `#b154cf`,
-  magenta `#da5bd6`. Background `#041312`.
-- **The table** is a carved stone oval (`▓▒░` shading) on a dark field. The felt is a
-  dim green `░` field.
-- **Players are creatures**, each with a glyph, colour and title:
-  - you: `@` white
-  - Adaptive "the Bayesian Seer": `Ω` magenta
-  - Simple "the Reckoner": `Σ` cyan
-  - Maniac "a frothing snapjaw": `s` red
-  - Nit "the hoarding tortoise": `t` brown
-  - Station "a chrome idol": `I` grey
-  - Exploiter "the mimic": `m` orange
-- **Cards** are 5×4 glyph boxes. The back is `▒` in dark cyan; hearts and diamonds are
-  red, clubs and spades white.
-- **Message log** at the bottom, in the game's voice: *"The snapjaw shoves 9,550 chips
-  across the felt, frothing."*, *"You fold. The Bayesian Seer notes it."*
-- **Side panel:** the Seer's read on you (VPIP, fold-to-bet, bluff estimate) as Qud-style
-  stat bars, and your session result.
+  magenta `#da5bd6`. Background `#041312`. Log markup `{{R|text}}` uses these single-letter codes.
+- **The table** is a carved stone oval (`▓▒░` shading) on a dark field, with dim green `░` felt.
+  Each region reskins it: salt-crust white stone, sunken rust, fungal purple felt, crystal.
+- **Cards** are 4×3 glyph boxes. The back is `▒` in dark cyan; hearts and diamonds red, clubs and
+  spades white. Optional four-colour deck (clubs green, diamonds blue).
+- **Message log** in the game's voice: *"The gnashback shoves 9,550 chips across the felt,
+  frothing."*, *"You fold. The Seer notes it."* Hand names type out letter by letter.
+- **Side panel:** the Seer's read on you (VPIP, PFR, fold to bet, stabs, bluffs) as stat bars,
+  the creature list with stacks and moods, and your session or run result.
+- **Optional CRT mode:** scanlines, slight bloom on bright glyphs (`shadowBlur`), vignette.
+
+### Creatures
+
+Every bot is a creature: a glyph, a colour, a name, a title, a bot config, a tell and a
+voice. The existing seven, renamed where the name was Qud's own (the renames in
+`game/creatures.ts` land in phase 4):
+
+| Glyph | Creature | Bot | Plays like |
+|---|---|---|---|
+| `@` white | you, *the wanderer* | human | |
+| `Ω` magenta | **the Seer**, *the Bayesian Seer* | `AdaptiveBot` (look-ahead) | Models you, adapts, mixes sizes. The recurring rival. |
+| `Σ` cyan | **the Reckoner** | `SimpleEquityBot` | Equity and pot odds, no model. Honest. |
+| `g` red | **a frothing gnashback** (was "snapjaw") | `Maniac` | Raises 45% of the time. Pays everyone. |
+| `t` brown | **the hoarding tortoise** | `Nit` | Top 12% preflop. When it bets, believe it. |
+| `I` grey | **a chrome idol** | `CallingStation` | Always calls. Never bluff it. |
+| `m` orange | **the mimic** | `Exploiter` | Bets when you check, folds to your bets. Punish it with check-raises. |
+| `?` green | **a glitching sprite** | `RandomBot` | Pure noise. |
+
+New creatures are mostly `AdaptiveBot` with different `params`, which gives distinct personalities
+for free, plus a few rule-bending bosses:
+
+| Glyph | Creature | Config | Personality |
+|---|---|---|---|
+| `&` dark red | a rust-wraith | adaptive, `bet_rel 1.15`, `bluff_scale 0.5` | Tight and aggressive. |
+| `δ` brown | a dune-strider | adaptive, `bet_rel 1.3`, `defend 1`, `trap 0` | Loose and passive; calls too much. |
+| `ƒ` dark magenta | a fungal hermit | adaptive, `trap 0.8` | Slow-plays everything strong. |
+| `ж` gold | the many-handed croupier | none | Deals. Flavour only; it is the deal animation's origin. |
+| `☼` orange | **boss:** the Sun-Eater | adaptive, `bluff_scale 1.8`, `mix 0.08` | Relentless pressure. Table rule: straddle every hand. |
+| `Ψ` cyan | **boss:** the Chorus | three adaptive configs, one chosen per hand | Three heads, three styles; the tell shows which head is speaking. |
+| `◊` white | **boss:** the Crystal Arbiter | adaptive, tuned for the variant | Final boss. Table rule: big board (5 streets). |
+
+**Moods** are real parameter changes, shown as a status glyph above the creature:
+
+- **Tilted** `!` red: after losing a big pot. For N hands, `bet_rel` −0.1 and `bluff_scale` ×1.5.
+- **On a heater** `*` orange flicker: after three wins. More aggressive, fewer folds.
+- **Wary** `?` cyan: after you show a bluff. Calls wider against you for a while.
+- **Short-stacked** `↓`: shoves wider (push/fold below 12bb).
+
+**Tells**: each creature has an idle animation that correlates with its hand strength, with a
+per-creature reliability (the gnashback drools `~` with strong hands 70% of the time; the
+tortoise retreats into its shell `(t)`; the idol never tells). The tell is computed in the
+Worker from the bot's own equity, so it is honest, learnable and never cheats for or against you.
 
 ### Animations
 
-- Cards fly from the dealer seat to each player along an arc, trailing dim glyphs. Board
-  cards flip (`▒ → ▌ → K♠`).
-- Chip glyphs (`•` `○` `◘`) slide from a bet into the pot when the street ends; a winner's
-  pot bursts back toward them.
-- All-in: brief screen shake plus a red glyph pulse on the seat.
+- Cards fly from the croupier to each seat along an arc, trailing dim glyphs. Board cards flip
+  (`▒ → ▌ → K♠`).
+- Chip glyphs (`•` `○` `◘`) slide from bets into the pot when a street ends; the pot bursts back
+  toward the winner, split pots split visibly.
+- All-in: brief screen shake plus a red glyph pulse on the seat. All-in and called: the remaining
+  board deals slowly, one card at a time, with equities shown.
 - Winner: the seat glyph flickers gold and the hand name types out in the log.
+- Rare hands get a fanfare: quads crackle with blue sparks, a straight flush calls down a
+  lightning bolt of `╲╱` across the screen, a royal flush turns the felt gold for a moment.
 - Bot "thinking": the creature glyph slowly cycles brightness (`Ω` dim → bright).
-- Idle: occasional flicker in the stone shading, embers (`·`) drifting off the table edge.
-- Everything respects `prefers-reduced-motion` and has a speed setting (1×, 4×, instant).
+- Idle: stone shading flickers, embers (`·`) drift off the table edge, the croupier's hands shuffle.
+- Bust: the creature's glyph crumbles into `.` `,` `'` that scatter and fade.
+- Everything respects `prefers-reduced-motion` and has a speed setting (1×, 2×, 4×, instant).
+
+### Sound (WebAudio, synthesised)
+
+Card flick (short filtered noise burst), chip clatter (a few randomised clicks), all-in thunder
+(low sine plus noise swell), win chime (pentatonic arpeggio, longer for bigger pots), a per-creature
+"voice" bleep when it acts (pitch and timbre from the creature), and a low ambient cave drone (two
+detuned oscillators with a slow LFO) that changes per region. Master, effects and ambience volumes;
+muted until the first user gesture, as browsers require.
 
 ### Controls
 
-Keyboard first, Qud style: `f` fold, `c` call/check, `r` opens a bet slider (←/→ in
-big blinds, `h` half pot, `p` pot, `a` all-in, Enter confirms), `?` shows odds,
-`l` opens the log, Space for the next hand. Every key also has a clickable button,
-and on mobile the buttons are the main controls.
+Keyboard first, Qud style: `f` fold, `c` call/check, `r` opens the bet slider (`←`/`→` in big
+blinds, `h` half pot, `p` pot, `a` all-in, Enter confirms, Esc cancels), `?` shows odds, `l` look
+mode (move a cursor over any glyph to read about it), `L` opens the full log, `Space` next hand,
+`Esc` menu. Pre-action checkboxes (check/fold, call any) when it isn't your turn. Every key also
+has a clickable button, and on mobile the buttons are the main controls.
+
+### Odds and coaching
+
+- `?` overlay: your equity against random hands, pot odds, and the call/fold break-even, with the
+  numbers explained in a line of text. A relic upgrades this to equity against the ranges the
+  Seer would assign.
+- **Lessons from the Seer**: after a hand, step through your decisions and see what AdaptiveBot
+  scored each option at (it already computes an EV per option in look-ahead). Shown as a glyph bar
+  per option.
+
+## The Pilgrimage (roguelite run)
+
+- **Map**: a glyph overworld of about 12 nodes across 3–4 regions, generated from the run seed.
+  Paths branch, so you choose your route.
+- **Regions deal different variants**, which the engine already supports:
+
+  | Region (working names) | Variant | Tone |
+  |---|---|---|
+  | The Salt-Flat Caravanserai | hold'em | Warm-up tables, mostly simple and station creatures |
+  | The Sunken Halls | short deck | Rust, dripping water, tight creatures |
+  | The Fungal Deep | Omaha (NL) | Purple felt, spores drift instead of embers |
+  | The Crystal Spire | big board | Final region and the Arbiter |
+
+- **Node types**: table (leave after you double up or after N hands), sit & go, merchant (buy
+  relics), shrine (a gamble: stake chips or a relic on a coin of fate), rest (recover a buy-in),
+  boss.
+- **Relics** affect only your information or your money, never the bots' cards, so the bots stay
+  honest:
+
+  | Relic | Effect |
+  |---|---|
+  | Third Eye | Once per table, see the next board card before you act. |
+  | Seer's Lens | The `?` overlay uses range-aware equity. |
+  | Mirror Mask | The Seer's model of you is blinded for this table (bots fall back to priors). |
+  | Night-Sight | See mucked cards at the end of each hand. |
+  | Chitin Purse | The first all-in you lose at each table refunds 25%. |
+  | Tongue of Ash (cursed) | You post double blinds, but start each table with +50% stack. |
+  | Two-Headed (stretch) | Dealt three hole cards, discard one on the flop. Needs per-seat discard support in the engine. |
+
+- **Permadeath**: when you're broke with no buy-ins left, the run ends on a tombstone:
+  *"Here lies the wanderer, who called the gnashback's river shove with seven-high."*
+- **Chronicle**: a generated history of the run in the game's voice: your biggest pot, your worst
+  beat, the creatures you broke, the relics you carried. Saved, viewable, and shareable as text.
+- **Score**: chips banked plus feats.
+
+## Meta
+
+- **Feats** (achievements): win with 7-2, bust the idol, bluff the Seer off a hand, hit a royal,
+  finish a pilgrimage, finish one without relics, and so on. Shown with Qud-style popups.
+- **Bestiary**: every creature you've met, with your record against it and its observed stats.
+- **Daily Pilgrimage share string**, copyable:
+  ```
+  ASCII POKER · daily 2026-10-28
+  @ ◘◘◘○○ reached the Fungal Deep · +12,400
+  ```
+- **Hand history**: every hand saved as seed + actions; export as plain text in a standard
+  hand-history format; replay URL encodes the compressed seed + actions, so sharing needs no server.
+
+## Settings
+
+Speed, reduced motion, sound volumes, four-colour deck, font (Plex or CP437 bitmap), CRT mode,
+default table size and variant, starting stack and blinds, bot think time, reset the Seer's memory,
+export and import save data.
+
+## Accessibility and mobile
+
+- An `aria-live` region mirrors the message log in plain text; every control is a real button.
+- Suits always have a glyph, never colour alone; a high-contrast palette option.
+- Mobile portrait gets its own scene layout (about 48 columns), with large action buttons and the
+  bet slider as a native range input. Landscape phones use the desktop layout scaled down.
 
 ## Architecture
 
 ```
-web/
-  src/engine/        cards, variant, evaluator, equity, game types, table state machine
-  src/bots/          AdaptiveBot (look-ahead), opponent model, sparring bots
-  src/worker/        botWorker.ts: runs bot.act() off the main thread
-  src/render/        glyph grid, palette, sprites, tweens, layout of seats and board
-  src/game/          session: seats, stacks, rebuys, hand history, persistence
-  src/app/           Next.js pages: / (table), /settings, /about
-  tests/             vitest: evaluator, equity sanity, engine invariants, Python parity
-python fixtures  →   tests/fixtures/*.json, generated by scripts/make_fixtures.py
+web/src/
+  engine/   cards, variant, evaluator (done); rng, equity, types, table (state machine), handHistory
+  bots/     opponentModel, adaptiveBot (look-ahead), sparring (station, maniac, nit, simple,
+            exploiter, random), personalities (creature → bot config), tells, moods
+  worker/   botWorker.ts + a typed client: act(seat, view) → Action, observe(event)
+  render/   grid, palette, canvas (done); sprites, tweens, timeline, effects (shake, particles,
+            lightning), layouts (desktop, mobile), scenes (table, map, merchant, menus, tombstone)
+  audio/    synth voices, ambience
+  game/     creatures (done), session (quick play), run (pilgrimage: map gen, nodes, relics),
+            director (events → animation timeline → view), text (log/chronicle templates),
+            save (localStorage, versioned), feats
+  app/      / (title and menu), /play, /pilgrimage, /replay, /settings, /about
+web/tests/  evaluator (done), rng, equity, engine invariants and parity, bots, text, save migrations
+scripts/    make_fixtures.py: evaluator fixtures (done); add equity and full-hand engine fixtures
 ```
 
-- **Engine:** `TableState` plus pure `legalActions(state)` and `apply(state, action)`, and
-  an event stream (`hand_start`, `blinds`, `deal`, `action`, `street`, `showdown`,
-  `hand_end`) with the same shape as the Python events. The renderer animates from
-  events; bots learn from events.
-- **Persistence:** `localStorage` keeps your chips, settings and the Seer's model of
-  you, so it remembers you between visits.
+**Data flow per hand:** the engine emits events (`hand_start`, `blinds`, `deal`, `action`,
+`street`, `showdown`, `hand_end`, same shape as the Python events). The **director** turns each
+event into timeline steps (animations, sounds, log lines) and only then commits the new view
+state. Bots learn from the same events through the Worker. Human input is enabled only when the
+engine is waiting on you and the timeline is idle. React holds menus and the DOM button layer;
+the per-frame game state lives in a plain store, outside React.
+
+**Bot timing:** each decision has a compute budget (about 150 ms; less for Omaha's slower
+evaluator) and a separate minimum display time (0.4–1.2 s at 1×, scaled by the speed setting), so
+bots feel like they think without making you wait for maths.
 
 ## Phases
 
 | # | What | Done when |
 |---|---|---|
-| 0 | Scaffold Next.js app, palette, canvas glyph grid, static table mock | `npm run dev` shows the table in Qud style |
-| 1 | Port cards, variant, evaluator | vitest passes, plus a parity test against 5,000 Python-ranked hands |
-| 2 | Port equity engine, game types, step-driven table engine | Equities match Python within MC noise; chips always sum to zero over 10k random hands |
-| 3 | Port sparring bots, opponent model, AdaptiveBot with look-ahead; Worker | TS bot beats TS simple heads-up in a headless sim, like the Python one does |
-| 4 | Playable game: seats, input, log, rebuys, session persistence | You can play a full session in the browser |
-| 5 | Animations and polish (deal, chips, flips, shake, flicker, reduced motion) | Feels alive at 60 fps on a laptop |
-| 6 | Deploy to Vercel (preview, then production) | Public URL works on desktop and mobile |
-| 7 | Later: hand-history replay (like the Sequoia viewer), more variants, leaderboard | n/a |
+| 0 | Scaffold, palette, glyph grid, static table mock | **done** |
+| 1 | Port cards, variant, evaluator | **done** |
+| 2 | Seeded RNG; port equity; game types; step-driven table engine with side pots and the real short-all-in rule | Equities match Python fixtures within MC noise; chips sum to zero over 10k random hands (property tests with fast-check); full-hand parity with the Python engine on fixed decks and action lists |
+| 3 | Port sparring bots, opponent model, AdaptiveBot with look-ahead; the Worker; a headless `npm run sim` | TS AdaptiveBot beats TS SimpleEquityBot heads-up by a margin inside Python's CI (+249 ±63 bb/100), and decisions stay under budget |
+| 4 | **Playable MVP**: Quick Play and Duel; director, input, bet slider, log text generator, odds overlay, rebuys, persistence; render fixes from the mock review | You can play a full session in the browser, keyboard or mouse, and the Seer remembers you on reload |
+| 5 | Ship it: Vercel project (root `web/`), GitHub Actions for lint, vitest, Python tests and build, preview deploys per PR | Public URL works on desktop and mobile |
+| 6 | Juice: sprites and tweens, every animation above, sound, screen shake, rare-hand fanfares, tells, moods, CRT mode, speed and reduced motion | Feels alive at 60 fps on a laptop; reduced motion leaves no animation running |
+| 7 | The Pilgrimage: map generation, regions and variants, new creatures and bosses, merchant and relics, shrines, sit & go, permadeath, tombstone and chronicle | A full run from caravanserai to Arbiter is winnable, losable, and different each seed |
+| 8 | Meta: daily seed and share string, Replay Theatre and replay URLs, hand-history export, feats, bestiary, Lessons from the Seer, mobile portrait layout, CP437 font | All of the above work offline from a static deploy |
+| 9 | Optional online: daily leaderboard and server-stored replays (a Vercel Marketplace store such as Upstash Redis or Neon Postgres) | Leaderboard is live and rejects results that don't replay from their seed + actions |
+
+Phase 4 is the first thing worth playing. Phases 6–8 can run in parallel once 4 is in.
+
+## Testing
+
+- **Parity with Python**: evaluator (done), equity within MC noise, and full hands (deck order +
+  actions → identical events and deltas) with `shortAllInReopens = true`.
+- **Engine invariants** (fast-check): chips conserved, no negative stacks, legal actions only,
+  every hand terminates, side pots pay correctly, odd chips go to the right seat.
+- **Bot strength**: headless matchups in CI with a fixed seed and a small hand count as a smoke
+  test; the full matchup table runs on demand.
+- **Replays**: replaying a saved hand from seed + actions reproduces it exactly.
+- **Save migrations**: every old save version loads.
+- **Visual**: Playwright screenshots of key scenes (table, map, tombstone) at desktop and mobile
+  sizes, compared in CI.
+
+## Naming and IP
+
+- Working title stays "ascii-poker". The game must not be called "Caves of Qud", or use its
+  creature names (snapjaw, glowmoth, and so on), place names (Joppa, Golgotha and so on), its
+  currency of water drams, its font or its tiles. The creatures above are renamed to original
+  ones for this reason ("frothing snapjaw" becomes "frothing gnashback").
+- A colour palette and the `{{R|text}}` markup style are general techniques, not assets; fine to keep.
+- Fonts: IBM Plex Mono (OFL). For the CP437 option, use a font whose licence allows web
+  embedding, such as the Ultimate Oldschool PC Font Pack (CC BY-SA 4.0, needs attribution on
+  `/about`).
 
 ## Risks
 
-- **Bot strength drifting in the port.** Mitigated by parity fixtures and the same
-  headless matchups as in Python.
-- **Main-thread jank from Monte Carlo.** Mitigated by the Worker plus a per-decision time budget.
-- **Canvas text crispness on HiDPI screens.** Scale the canvas by `devicePixelRatio`
-  and snap glyphs to the cell grid.
+- **Bot strength drifting in the port.** Parity fixtures and the same headless matchups as Python.
+- **Main-thread jank from Monte Carlo.** The Worker plus a per-decision time budget.
+- **Canvas text crispness on HiDPI screens.** Scale by `devicePixelRatio` and snap glyphs to cells
+  (already done in `GlyphCanvas`).
+- **Scope.** This plan is big. Phase 4 alone is a complete, shippable game; everything after it
+  is additive and can stop at any phase.
+- **Omaha speed.** Its evaluator is about 60× slower; lower Monte Carlo iterations in the Fungal
+  Deep and lean on the time budget.
+- **Next.js 16 differences.** `web/AGENTS.md` warns that APIs differ from older versions; read
+  `node_modules/next/dist/docs/` before touching routing, fonts or config.
+
+## Open questions
+
+1. A real title for the game (the working title is fine until phase 5).
+2. Pilgrimage first or polish first? This plan ships Quick Play (phase 4) first, then juice (6),
+   then the run (7).
+3. Is an online leaderboard (phase 9) wanted at all, given it's the only part that needs a server?
