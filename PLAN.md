@@ -44,7 +44,7 @@ many eyes, remembers how you play between visits.
 | Question | Choice | Why |
 |---|---|---|
 | Where does the bot run? | **Ported to TypeScript, in the browser, inside a Web Worker** | No server round trips, so animations never wait on the network. Free static hosting. The Monte Carlo loop is faster in JS than in Python. The Worker keeps the frame rate smooth while bots think. |
-| Framework | **Next.js (App Router) + TypeScript** | Vercel-native, and room for server features later (daily leaderboard, shared replays) without a rewrite. Everything up to phase 8 is fully static. |
+| Framework | **Next.js (App Router) + TypeScript** | Vercel-native, and room for server features later (daily leaderboard, shared replays) without a rewrite. Everything through phase 7 is fully static; phase 8 adds share-card functions. |
 | Rendering | **One `<canvas>` glyph grid** (cells with glyph + fg + bg) plus a sprite layer for moving glyphs | Pixel-exact ASCII, cheap per-cell colour, and animation is just moving sprites between cells. |
 | Menus and screens | **Drawn in glyphs too**, with a thin DOM layer underneath for buttons, focus and screen readers | Qud's menus are part of its look. The DOM layer keeps mobile and accessibility honest. |
 | Engine shape | **Pure, step-driven state machine**: `legalActions(state)`, `apply(state, action) → {state, events}` | The UI has to pause for the human and for animations. The Python engine's `bot.act()` loop can't do that. Pure functions make replays, undo-for-tests and property tests cheap. |
@@ -259,6 +259,38 @@ the per-frame game state lives in a plain store, outside React.
 evaluator) and a separate minimum display time (0.4–1.2 s at 1×, scaled by the speed setting), so
 bots feel like they think without making you wait for maths.
 
+## Deploying on Vercel
+
+The game ships on Vercel from the start; nothing in phases 0–8 needs a server.
+
+- **Project**: a new Vercel project in the `charliephu123` team (there isn't one for this repo
+  yet), connected to `charliephu123/dookie` through the Git integration. **Root Directory: `web`**,
+  framework preset Next.js, Node 22. The Python kit at the repo root is never built or deployed.
+- **Branches**: production deploys from `main`; every other branch and PR gets a preview URL.
+  The repo has no `main` yet (only `claude/focused-bell-1gjcyv`), so create it before
+  connecting the project. Previews are behind Vercel Authentication by default; turn that off
+  for previews, or use a share link, when showing them to people without a Vercel login.
+- **Ignored Build Step**: `git diff HEAD^ HEAD --quiet -- .` (run from `web/`), so commits that
+  only touch the Python kit don't trigger a build.
+- **Everything prerenders as static**: the table, map and menus are client components on static
+  routes, `next/font` self-hosts the font at build time, and the bot Worker is bundled with
+  `new Worker(new URL("../worker/botWorker.ts", import.meta.url))`. No environment variables
+  until phase 9. `next.config.ts` already turns on `cacheComponents`; keep game state out of
+  server components so it stays that way.
+- **Vercel Web Analytics and Speed Insights** (`@vercel/analytics`, `@vercel/speed-insights`):
+  page views plus custom events (hand played, run started, run ended and how, daily completed),
+  and real-user frame and load metrics to check the 60 fps and Worker budgets on real devices.
+- **Share cards**: `opengraph-image` routes built with `next/og` render the glyph result for a
+  daily run (`/daily/[date]/[code]`) and a replay (`/replay/[code]`) as an image, so links pasted
+  into chat unfurl as a little ASCII table. These are the first Vercel Functions (phase 8).
+- **Online, later (phase 9)**: Upstash Redis from the Vercel Marketplace for the daily leaderboard
+  (its env vars are injected into the project automatically), written through Next.js route
+  handlers with rate limiting. The engine and bots are plain TypeScript, so the route handler
+  verifies a submitted daily run by replaying it: same seed, same bot code, recorded human
+  actions. For that to be exact, daily runs use a fixed Monte Carlo iteration count instead of
+  the time budget (a time budget makes bot decisions depend on machine speed).
+- **Custom domain**: optional, added once there's a real title.
+
 ## Phases
 
 | # | What | Done when |
@@ -268,11 +300,11 @@ bots feel like they think without making you wait for maths.
 | 2 | Seeded RNG; port equity; game types; step-driven table engine with side pots and the real short-all-in rule | Equities match Python fixtures within MC noise; chips sum to zero over 10k random hands (property tests with fast-check); full-hand parity with the Python engine on fixed decks and action lists |
 | 3 | Port sparring bots, opponent model, AdaptiveBot with look-ahead; the Worker; a headless `npm run sim` | TS AdaptiveBot beats TS SimpleEquityBot heads-up by a margin inside Python's CI (+249 ±63 bb/100), and decisions stay under budget |
 | 4 | **Playable MVP**: Quick Play and Duel; director, input, bet slider, log text generator, odds overlay, rebuys, persistence; render fixes from the mock review | You can play a full session in the browser, keyboard or mouse, and the Seer remembers you on reload |
-| 5 | Ship it: Vercel project (root `web/`), GitHub Actions for lint, vitest, Python tests and build, preview deploys per PR | Public URL works on desktop and mobile |
+| 5 | Ship it on Vercel (see [Deploying on Vercel](#deploying-on-vercel)): `main` branch, Git-connected project with root `web/`, preview deploys per PR, Analytics and Speed Insights; GitHub Actions for lint, vitest, Python tests and build | Production URL works on desktop and mobile; every PR gets a working preview |
 | 6 | Juice: sprites and tweens, every animation above, sound, screen shake, rare-hand fanfares, tells, moods, CRT mode, speed and reduced motion | Feels alive at 60 fps on a laptop; reduced motion leaves no animation running |
 | 7 | The Pilgrimage: map generation, regions and variants, new creatures and bosses, merchant and relics, shrines, sit & go, permadeath, tombstone and chronicle | A full run from caravanserai to Arbiter is winnable, losable, and different each seed |
-| 8 | Meta: daily seed and share string, Replay Theatre and replay URLs, hand-history export, feats, bestiary, Lessons from the Seer, mobile portrait layout, CP437 font | All of the above work offline from a static deploy |
-| 9 | Optional online: daily leaderboard and server-stored replays (a Vercel Marketplace store such as Upstash Redis or Neon Postgres) | Leaderboard is live and rejects results that don't replay from their seed + actions |
+| 8 | Meta: daily seed and share string, Replay Theatre and replay URLs, `next/og` share cards, hand-history export, feats, bestiary, Lessons from the Seer, mobile portrait layout, CP437 font | All of the above work from the static deploy (share cards are the only functions) |
+| 9 | Optional online: daily leaderboard and server-stored replays (Upstash Redis via the Vercel Marketplace, route handlers) | Leaderboard is live and rejects results that don't replay from their seed + actions |
 
 Phase 4 is the first thing worth playing. Phases 6–8 can run in parallel once 4 is in.
 
