@@ -58,6 +58,7 @@ export default function PokerGame({ fontFamily }: { fontFamily: string }) {
       if (e.key.length === 1 || e.key === "Enter" || e.key === "Backspace" || e.key === "Escape") {
         e.preventDefault();
         game.key(e.key);
+        sync(game);
         input.current?.focus({ preventScroll: true });
       }
     };
@@ -73,6 +74,13 @@ export default function PokerGame({ fontFamily }: { fontFamily: string }) {
     };
   }, []);
 
+  // Redraws wait for the next animation frame, so after Enter clears the line the text box
+  // would still hold the old text for a moment, and a fast next keystroke would append to it.
+  // Copy the game's input into the box right away instead.
+  function sync(g: Game) {
+    if (input.current && input.current.value !== g.view.prompt.input) input.current.value = g.view.prompt.input;
+  }
+
   if (!game) return null;
   const view = toTableView(game.view);
 
@@ -81,6 +89,7 @@ export default function PokerGame({ fontFamily }: { fontFamily: string }) {
     if (e.key === "Enter" || e.key === "Escape" || (e.key === " " && game.view.prompt.mode !== "act")) {
       e.preventDefault();
       game.key(e.key);
+      sync(game);
     } else if ((e.key === "l" || e.key === "L") && empty) {
       e.preventDefault();   // the screen opens the log instead
     }

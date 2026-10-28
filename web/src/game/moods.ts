@@ -106,7 +106,7 @@ export class MoodTracker {
 /** The log line for a mood change. */
 export function moodLine(who: string, c: MoodChange): string | null {
   switch (c.mood) {
-    case "tilted": return `${who} is on tilt. {{K|It will play loose for a while.}}`;
+    case "tilted": return `${who} is on tilt.`;
     case "heater": return `${who} is running hot.`;
     case "wary": return `${who} eyes you warily now.`;
     case "short": return `${who} is short-stacked and desperate.`;

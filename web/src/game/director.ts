@@ -338,6 +338,8 @@ export class Director implements Presenter {
         for (const q of V.seats) { q.stack = e.stacks[q.id]; q.bet = e.bets[q.id]; }
         s.acting = false;
         s.allIn = e.allIn;
+        // they've acted: stop saying we're waiting on them (think() names the next one)
+        if (V.prompt.mode === "wait") V.prompt = { ...V.prompt, info: "" };
         if (e.action === "fold") { s.cards = null; s.tell = null; }
         V.pot = e.potAfter;
         break;
@@ -355,7 +357,7 @@ export class Director implements Presenter {
           s.tell = null;
           s.won = e.pots.reduce((a, pot) => a + (pot.won[s.id] ?? 0), 0);
         }
-        V.pot = 0;
+        // the pot stays on show while it's paid out; the next hand_start clears it
         break;
     }
   }
@@ -368,7 +370,7 @@ export class Director implements Presenter {
     const stacks = V.seats.map((s) => s.stack + s.bet);
     const avg = stacks.reduce((a, b) => a + b, 0) / Math.max(1, stacks.length);
     V.tension = {
-      pot: V.pot / Math.max(1, avg),
+      pot: state.done ? 0 : V.pot / Math.max(1, avg),
       allIn: V.seats.some((s) => s.allIn && s.cards !== null) && !state.done,
       yourTurn: V.prompt.mode === "act",
     };
