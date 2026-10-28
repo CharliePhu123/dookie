@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "vitest run"
+    "test": "vitest run",
+    "sim": "tsx scripts/sim.ts"
   },
   "dependencies": {
     "next": "16.4.3",
@@ -21,6 +22,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.4.3",
     "fast-check": "^4.10.2",
+    "tsx": "^4.23.15",
     "typescript": "^5",
     "vitest": "^5.0.5"
   }
