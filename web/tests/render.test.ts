@@ -1,56 +1,74 @@
 import { describe, expect, it } from "vitest";
-import { tableDist } from "@/render/geom";
-import { Grid } from "@/render/grid";
-import { makeLayout } from "@/render/layout";
+import { makeLayout, overlaps, tableEdge } from "@/render/layout";
+import { markup, moodFromView, type TableView } from "@/render/view";
+import { CALM, World } from "@/render/world";
+import { CREATURES } from "@/game/creatures";
 
-const SIZES: [number, number][] = [[130, 40], [141, 44], [174, 45], [142, 37], [46, 54], [120, 34], [60, 40]];
+const SIZES: [number, number][] = [[1440, 900], [1920, 1080], [1280, 720], [390, 844], [1024, 768], [430, 932]];
 
 describe("layout", () => {
-  for (const [cols, rows] of SIZES) {
+  for (const [W, H] of SIZES) {
     for (const n of [2, 6, 8]) {
-      it(`places ${n} seats cleanly on a ${cols}x${rows} grid`, () => {
-        const L = makeLayout(cols, rows, n);
-        const { world, table, seats } = L;
-        for (const s of seats) {
-          const r = s.rect;
-          expect(r.x).toBeGreaterThanOrEqual(world.x);
-          expect(r.y).toBeGreaterThanOrEqual(world.y);
-          expect(r.x + r.w).toBeLessThanOrEqual(world.x + world.w);
-          expect(r.y + r.h).toBeLessThanOrEqual(world.y + world.h);
-          for (let y = r.y; y < r.y + r.h; y++)
-            for (let x = r.x; x < r.x + r.w; x++) expect(tableDist(table, x, y)).toBeGreaterThan(1.0);
-          // bets sit on the felt
-          expect(tableDist(table, s.bet.x, s.bet.y)).toBeLessThan(0.85);
+      it(`gives ${n} seats room on a ${W}x${H} screen`, () => {
+        const L = makeLayout(W, H, n);
+        for (const s of L.seats) {
+          const b = s.box;
+          expect(b.x).toBeGreaterThanOrEqual(0);
+          expect(b.y).toBeGreaterThanOrEqual(0);
+          expect(b.x + b.w).toBeLessThanOrEqual(W);
+          expect(b.y + b.h).toBeLessThanOrEqual(L.prompt.y);
+          // clear of the table's rim
+          for (const [fx, fy] of [[0, 0], [1, 0], [0, 1], [1, 1], [0.5, 0], [0.5, 1], [0, 0.5], [1, 0.5]])
+            expect(tableEdge(L.table, b.x + b.w * fx, b.y + b.h * fy)).toBeGreaterThan(0);
+          // chips sit on the felt
+          expect(tableEdge(L.table, s.bet.x, s.bet.y)).toBeLessThan(-L.rimWidth);
         }
-        for (let i = 0; i < seats.length; i++)
-          for (let j = i + 1; j < seats.length; j++) {
-            const a = seats[i].rect, b = seats[j].rect;
-            const apart = a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y;
-            expect(apart).toBe(true);
-          }
+        for (let i = 0; i < L.seats.length; i++)
+          for (let j = i + 1; j < L.seats.length; j++) expect(overlaps(L.seats[i].box, L.seats[j].box)).toBe(false);
         // the board fits on the felt
-        const boardW = 5 * (L.cardW + 1) - 1;
-        expect(tableDist(table, table.cx - boardW / 2, table.cy)).toBeLessThan(0.9);
-        expect(L.cave.braziers.length).toBeGreaterThanOrEqual(2);
-        expect(L.cave.crowd.length).toBeGreaterThanOrEqual(3);
+        const boardW = 5 * L.card.w + 24;
+        expect(tableEdge(L.table, L.board.x - boardW / 2, L.board.y)).toBeLessThan(-L.rimWidth);
+        expect(L.cols * L.cell.w).toBeGreaterThanOrEqual(W);
+        expect(L.rows * L.cell.h).toBeGreaterThanOrEqual(H);
       });
     }
   }
+});
 
-  it("is deterministic for a seed", () => {
-    const a = makeLayout(141, 44, 6, 3).cave, b = makeLayout(141, 44, 6, 3).cave;
-    expect(Buffer.from(a.ch.buffer).equals(Buffer.from(b.ch.buffer))).toBe(true);
-    expect(Buffer.from(a.bg.buffer).equals(Buffer.from(b.bg.buffer))).toBe(true);
+describe("world", () => {
+  it("renders a frame deterministically and lights the table", () => {
+    const L = makeLayout(1440, 900, 6);
+    const a = new World(L), b = new World(L);
+    a.step(1.5, CALM); b.step(1.5, CALM);
+    expect(Buffer.from(a.glyph.buffer).equals(Buffer.from(b.glyph.buffer))).toBe(true);
+    const at = (x: number, y: number) => a.bg[(Math.floor(y / L.cell.h) * a.cols + Math.floor(x / L.cell.w)) * 4 + 1];
+    // the felt under the lamp is brighter than the dark corner
+    expect(at(L.table.cx, L.table.cy)).toBeGreaterThan(at(8, 8) + 10);
+  });
+
+  it("darkens the room on an all-in", () => {
+    const L = makeLayout(1440, 900, 6);
+    const calm = new World(L), tense = new World(L);
+    calm.step(2, CALM); tense.step(2, { ...CALM, allIn: true });
+    const sum = (w: World) => w.bg.reduce((n, v, i) => (i % 4 === 1 ? n + v : n), 0);
+    expect(sum(tense)).toBeLessThan(sum(calm));
   });
 });
 
-describe("grid", () => {
-  it("writes code points and ignores out-of-range cells", () => {
-    const g = new Grid(4, 2);
-    g.text(2, 1, "Ω♠x", 0xffffff);
-    expect(String.fromCodePoint(g.ch[1 * 4 + 2])).toBe("Ω");
-    expect(String.fromCodePoint(g.ch[1 * 4 + 3])).toBe("♠");
-    g.set(-1, 0, "x", 0);
-    g.set(9, 9, "x", 0);
+describe("view", () => {
+  it("parses markup", () => {
+    const s = markup("You fold. {{M|The Seer}} notes it.");
+    expect(s.map((x) => x.text).join("")).toBe("You fold. The Seer notes it.");
+    expect(s[1].fg).toBe(0xda5bd6);
+  });
+
+  it("derives tension from the pot", () => {
+    const seat = (stack: number, bet: number) => ({ creature: CREATURES.you, stack, bet, cards: [null, null], dealer: false, acting: false, allIn: false });
+    const v = (pot: number): TableView => ({
+      place: "", handNo: 1, blinds: [1, 2], street: "FLOP", board: [], boardSize: 5, pot, seats: [seat(1000, 0), seat(1000, 0)],
+      log: [], read: null, session: 0, prompt: { info: "", options: "", input: "", feedback: null, active: false },
+      ledger: { streets: [], rows: [] },
+    });
+    expect(moodFromView(v(800)).tension).toBeGreaterThan(moodFromView(v(50)).tension);
   });
 });
