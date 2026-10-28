@@ -8,8 +8,8 @@
   --red: #d74200;
   --cyan: #77bfcf;
   --white: #ffffff;
-  --panel: rgba(3, 12, 11, 0.86);
-  --shadow: 0 0 3px #000, 0 0 7px #000, 0 1px 2px #000;
+  --panel: rgba(3, 11, 10, 0.94);
+  --shadow: 0 1px 0 rgba(0, 0, 0, 0.85);
 }
 
 * {
@@ -46,7 +46,7 @@ main {
 }
 
 .world.glow {
-  image-rendering: auto;
+  image-rendering: pixelated;
   background: var(--bg);
 }
 
@@ -148,7 +148,7 @@ kbd {
 .card.face {
   background: linear-gradient(180deg, #e2dcc6, #cfc8b0);
   color: #0c1b1a;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.7), inset 0 0 0 1px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.6), inset 0 0 0 1px rgba(0, 0, 0, 0.3);
 }
 
 .card.face.red {
@@ -169,7 +169,7 @@ kbd {
 
 .card.back {
   background: repeating-linear-gradient(45deg, #17495a 0 3px, #113845 3px 6px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.7), inset 0 0 0 2px #0b2a33;
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.6), inset 0 0 0 2px #0b2a33;
 }
 
 .card.back::after {
@@ -195,7 +195,7 @@ kbd {
 
 .pot,
 .bet {
-  background: rgba(2, 8, 7, 0.5);
+  background: rgba(2, 8, 7, 0.82);
   padding: 1px 8px;
   border-radius: 2px;
 }
@@ -238,8 +238,13 @@ kbd {
 }
 
 .seat-name .glyph {
-  margin-right: 0.5em;
   display: inline-block;
+}
+
+.glyph-wrap {
+  position: relative;
+  display: inline-block;
+  margin-right: 0.5em;
 }
 
 .seat-title {
@@ -275,8 +280,7 @@ kbd {
 }
 
 .seat.acting .glyph {
-  animation: breathe 1.6s ease-in-out infinite;
-  text-shadow: 0 0 8px var(--glow), 0 0 16px var(--glow);
+  animation: breathe 2.4s ease-in-out infinite;
 }
 
 .seat .dots i {
@@ -433,7 +437,6 @@ kbd {
   color: var(--gold);
   font-weight: 600;
   white-space: nowrap;
-  text-shadow: 0 0 12px rgba(207, 192, 65, 0.55);
   animation: won-rise 1.6s ease-out both;
 }
 
@@ -498,12 +501,6 @@ kbd {
   color: var(--faint);
 }
 
-.ledger.floating {
-  position: absolute;
-  top: 56px;
-  right: 18px;
-  opacity: 0.8;
-}
 
 /* the drawer: closed by default; slides in from the right (a bottom sheet on phones) */
 .drawer {
@@ -514,7 +511,6 @@ kbd {
   width: 360px;
   padding: 18px 22px;
   background: var(--panel);
-  backdrop-filter: blur(3px);
   border-left: 1px solid rgba(119, 191, 207, 0.12);
   transform: translateX(100%);
   transition: transform 0.28s ease;
@@ -606,7 +602,6 @@ kbd {
   overflow-y: auto;
   padding: 16px 24px;
   background: var(--panel);
-  backdrop-filter: blur(3px);
   border: 1px solid rgba(119, 191, 207, 0.12);
   font-size: 13px;
   line-height: 1.6;
@@ -704,4 +699,226 @@ kbd {
     animation: none !important;
     transition: none !important;
   }
+}
+
+/* ---- per-seat action trail, tells and moods ------------------------------------------- */
+
+.trail {
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.trail .sep {
+  color: var(--faint);
+}
+
+.croupier {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  color: var(--gold);
+  opacity: 0.7;
+  font-size: 16px;
+}
+
+.mood {
+  position: absolute;
+  left: 50%;
+  top: -0.95em;
+  transform: translateX(-50%);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.mood-tilted {
+  color: var(--red);
+}
+
+.mood-heater {
+  color: var(--orange);
+  animation: heat 0.9s steps(2) infinite;
+}
+
+.mood-wary {
+  color: var(--cyan);
+}
+
+.mood-short {
+  color: var(--dim);
+}
+
+.tell {
+  display: inline-block;
+  margin-left: 2px;
+  font-size: 12px;
+}
+
+.tell.drool {
+  color: var(--cyan);
+  animation: drool 1.9s ease-in infinite;
+}
+
+.tell.shell {
+  color: #98875f;
+  margin: 0;
+  animation: shell 3.4s ease-in-out infinite;
+}
+
+.tell.tap {
+  position: relative;
+  width: 0.7em;
+}
+
+.tell.tap i {
+  position: absolute;
+  left: 0;
+  top: -0.85em;
+  font-style: normal;
+  color: var(--cyan);
+  animation: tap-a 0.7s steps(1) infinite;
+}
+
+.tell.tap i:last-child {
+  animation-name: tap-b;
+}
+
+.tell.stare {
+  color: #da5bd6;
+  font-size: 10px;
+  animation: stare 4s ease-in-out infinite;
+}
+
+.tell.blink {
+  color: var(--dim);
+  animation: stare 2s ease-in-out infinite;
+}
+
+.glyph.t-shimmer {
+  animation: shimmer 2.6s linear infinite;
+}
+
+.glyph.t-flicker {
+  animation: flick 1.3s steps(1) infinite;
+}
+
+@keyframes heat { 50% { opacity: 0.45; } }
+@keyframes drool {
+  0% { transform: translateY(-2px); opacity: 0; }
+  30% { opacity: 0.9; }
+  100% { transform: translateY(7px); opacity: 0; }
+}
+@keyframes shell {
+  0%, 55% { opacity: 0; }
+  70%, 92% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes tap-a { 0% { opacity: 1; } 50% { opacity: 0; } }
+@keyframes tap-b { 0% { opacity: 0; } 50% { opacity: 1; } }
+@keyframes stare { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+@keyframes shimmer {
+  0%, 100% { opacity: 1; }
+  20% { opacity: 0.5; }
+  40% { opacity: 1; }
+  55% { opacity: 0.7; }
+}
+@keyframes flick {
+  0% { opacity: 1; }
+  8% { opacity: 0.15; }
+  12% { opacity: 1; }
+  61% { opacity: 0; }
+  65% { opacity: 1; }
+}
+
+/* ---- animation sprites ---------------------------------------------------------------- */
+
+.fx {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.fx-s {
+  position: absolute;
+  left: 0;
+  top: 0;
+  white-space: nowrap;
+  line-height: 1;
+  will-change: transform, opacity;
+}
+
+.fx-s.trace {
+  color: #40a4b9;
+  font-size: 13px;
+}
+
+.fx-s.edge {
+  color: #e2dcc6;
+}
+
+.fx-s.chip {
+  font-size: 14px;
+}
+
+.fx-s.knock {
+  color: var(--fg);
+  font-size: 16px;
+}
+
+.fx-s.pulse {
+  color: #ff3a12;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.fx-s.handname {
+  color: var(--gold);
+  font-size: 14px;
+  letter-spacing: 0.06em;
+  background: rgba(2, 8, 7, 0.6);
+  padding: 2px 8px;
+}
+
+.fx-s.spark {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.fx-s.bolt {
+  color: #e8f4ff;
+  font-size: 18px;
+  font-weight: 600;
+  text-shadow: 0 0 6px #0096ff;
+}
+
+.fx-s.felt-flash {
+  border-radius: 50%;
+  background: radial-gradient(ellipse at center, rgba(255, 226, 120, 0.85), rgba(207, 192, 65, 0.35) 55%, rgba(207, 192, 65, 0) 75%);
+  mix-blend-mode: screen;
+}
+
+.fx-s.crumb {
+  font-size: 15px;
+}
+
+/* ---- CRT mode ------------------------------------------------------------------------- */
+
+.crt-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(to bottom, rgba(0, 0, 0, 0) 0, rgba(0, 0, 0, 0) 2px, rgba(0, 0, 0, 0.26) 3px),
+    radial-gradient(ellipse at center, rgba(0, 0, 0, 0) 55%, rgba(0, 0, 0, 0.6) 100%);
+}
+
+.scene.crt .world {
+  filter: contrast(1.08) saturate(1.15) brightness(1.08);
+}
+
+.scene.crt .layer {
+  text-shadow: 0 0 2px currentColor, var(--shadow);
 }

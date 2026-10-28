@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import { worldFontSize, type Layout } from "@/render/layout";
+import { useEffect, useRef, type RefObject } from "react";
+import { worldFontSize, type Box, type Layout } from "@/render/layout";
 import { WorldPainter } from "@/render/painter";
 import { World, type Mood } from "@/render/world";
 
@@ -16,9 +16,13 @@ declare global {
 
 /**
  * The world layer: the cave as an ASCII shader, filling the window behind the readable layer.
- * Two canvases: a one-pixel-per-cell glow stretched smooth by CSS, and the glyphs above it.
+ * Two canvases, both pixel-exact: the per-cell background light, scaled up by whole device
+ * pixels with nearest-neighbour sampling, and the glyphs above it. `quiet` holds the boxes of
+ * readable text (CSS px) the world keeps clear.
  */
-export default function WorldCanvas({ layout, mood, fontFamily }: { layout: Layout; mood: Mood; fontFamily: string }) {
+export default function WorldCanvas({ layout, mood, fontFamily, quiet }: {
+  layout: Layout; mood: Mood; fontFamily: string; quiet: RefObject<Box[] | null>;
+}) {
   const glowRef = useRef<HTMLCanvasElement>(null);
   const ref = useRef<HTMLCanvasElement>(null);
   const moodRef = useRef(mood);
@@ -27,15 +31,18 @@ export default function WorldCanvas({ layout, mood, fontFamily }: { layout: Layo
   useEffect(() => {
     const canvas = ref.current!, glow = glowRef.current!;
     const dpr = window.devicePixelRatio || 1;
+    // backing stores in whole device pixels, shown at exactly that size
     canvas.width = Math.round(layout.W * dpr);
     canvas.height = Math.round(layout.H * dpr);
-    canvas.style.width = `${layout.W}px`;
-    canvas.style.height = `${layout.H}px`;
-    glow.style.width = `${layout.cols * layout.cell.w}px`;
-    glow.style.height = `${layout.rows * layout.cell.h}px`;
+    canvas.style.width = `${canvas.width / dpr}px`;
+    canvas.style.height = `${canvas.height / dpr}px`;
+    const cw = Math.round(layout.cell.w * dpr), ch = Math.round(layout.cell.h * dpr);
+    glow.style.width = `${(layout.cols * cw) / dpr}px`;
+    glow.style.height = `${(layout.rows * ch) / dpr}px`;
     const ctx = canvas.getContext("2d")!;
     const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
     let raf = 0, stopped = false, last = -1;
+    let applied: Box[] | null = null;
     const start = performance.now();
     const times: { step: number; paint: number; cells: number }[] = (window.__worldTimes = []);
 
@@ -45,13 +52,20 @@ export default function WorldCanvas({ layout, mood, fontFamily }: { layout: Layo
       const painter = new WorldPainter(glow, ctx, world, fontFamily, dpr, worldFontSize(layout.W));
       window.__atlas = () => painter.atlasInfo;
       const tick = (t: number) => {
+        if (quiet.current !== applied) { applied = quiet.current; world.setQuiet(applied ?? []); }
         const t0 = performance.now();
         world.step(t, moodRef.current);
         const t1 = performance.now();
         painter.paint();
         if (times.length < 600) times.push({ step: t1 - t0, paint: performance.now() - t1, cells: painter.lastCells });
       };
-      if (motion.matches) { tick(0); return; }   // reduced motion: one still frame
+      if (motion.matches) {
+        // reduced motion: still frames, redrawn only when the text they sit under moves
+        const still = () => { if (stopped) return; if (quiet.current !== applied) tick(0); raf = requestAnimationFrame(still); };
+        tick(0);
+        raf = requestAnimationFrame(still);
+        return;
+      }
       const frame = (now: number) => {
         raf = requestAnimationFrame(frame);
         const t = (now - start) / 1000;
@@ -63,7 +77,7 @@ export default function WorldCanvas({ layout, mood, fontFamily }: { layout: Layo
       raf = requestAnimationFrame(frame);
     });
     return () => { stopped = true; cancelAnimationFrame(raf); };
-  }, [layout, fontFamily]);
+  }, [layout, fontFamily, quiet]);
 
   return (
     <>

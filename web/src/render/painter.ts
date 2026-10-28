@@ -1,9 +1,9 @@
 // Paints a World onto two stacked canvases.
 //
-// The glow (each cell's background light) is a tiny canvas, one pixel per cell, that CSS
-// stretches over the window: the compositor's bilinear filtering turns it into soft pools of
-// light for free, and updating it is a single putImageData. The glyphs go on a transparent
-// canvas above it. Glyphs come from an atlas (each glyph x colour pair is drawn once with
+// The background light is a tiny canvas, one pixel per cell, that CSS scales up by an exact
+// whole number of device pixels per cell with nearest-neighbour sampling: each cell gets a
+// crisp block of colour, and updating it is a single putImageData. The glyphs go on a
+// transparent canvas above it, at device resolution, every glyph on whole device pixels. Glyphs come from an atlas (each glyph x colour pair is drawn once with
 // fillText, then copied with drawImage), and only cells whose glyph or colour changed since
 // the last step are cleared and redrawn.
 import type { World } from "./world";

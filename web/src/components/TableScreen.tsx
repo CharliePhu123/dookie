@@ -3,11 +3,12 @@
 // The table screen: the world (an ASCII-shader cave on a canvas) with the readable layer on
 // top: seats, cards, chips, the HUD, the log, the typed-command prompt, the ledger and the
 // drawer. Both layers share one layout in CSS pixels.
-import { useEffect, useMemo, useState, useSyncExternalStore, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties } from "react";
 import { RANKS, rankOf, suitOf, type Card } from "@/engine/cards";
-import { makeLayout, type Layout } from "@/render/layout";
+import { makeLayout, type Box, type Layout } from "@/render/layout";
 import { css } from "@/render/palette";
 import { fmt, LEDGER_LEGEND, markup, moodFromView, type LedgerView, type SeatView, type TableView } from "@/render/view";
+import { useFx } from "./useFx";
 import WorldCanvas from "./WorldCanvas";
 
 // ---- window size, without setState-in-effect ---------------------------------------------
@@ -33,16 +34,55 @@ function Markup({ text, className }: { text: string; className?: string }) {
 
 const SUIT = "♣♦♥♠";
 
-function CardFace({ c, size }: { c: Card | null | undefined; size: { w: number; h: number } }) {
+type DataAttrs = { [k: `data-${string}`]: string | number };
+
+function CardFace({ c, size, data }: { c: Card | null | undefined; size: { w: number; h: number }; data?: DataAttrs }) {
   const style = { "--cw": `${size.w}px`, "--ch": `${size.h}px` } as CSSProperties;
-  if (c === undefined) return <div className="card empty" style={style} />;
-  if (c === null) return <div className="card back" style={style} />;
+  if (c === undefined) return <div className="card empty" style={style} {...data} />;
+  if (c === null) return <div className="card back" style={style} {...data} />;
   const red = suitOf(c) === 1 || suitOf(c) === 2;
   const label = (rankOf(c) === 8 ? "10" : RANKS[rankOf(c)]) + SUIT[suitOf(c)];
   return (
-    <div className={`card face${red ? " red" : ""}`} style={style}>
+    <div className={`card face${red ? " red" : ""}`} style={style} {...data}>
       <span className="tl">{label}</span>
       <span className="br">{label}</span>
+    </div>
+  );
+}
+
+const MOOD_MARK: Record<string, string> = { tilted: "!", heater: "*", wary: "?", short: "↓" };
+
+/** A tell: a tiny idle animation by the creature's glyph that leaks something about its hand. */
+function Tell({ kind }: { kind: string }) {
+  switch (kind) {
+    case "drool": return <span className="tell drool" aria-hidden="true">~</span>;
+    case "tap": return <span className="tell tap" aria-hidden="true"><i>.</i><i>:</i></span>;
+    case "stare": return <span className="tell stare" aria-hidden="true">◉</span>;
+    case "shell": case "shimmer": case "flicker": return null;   // these change the glyph itself
+    default: return <span className="tell blink" aria-hidden="true">·</span>;
+  }
+}
+
+/** This hand's actions for one seat, like a Qud status line: newest brightest, streets split by a dim dot. */
+function Trail({ cells, color }: { cells: string[][] | undefined; color: number }) {
+  const items: { code: string; street: number }[] = [];
+  cells?.forEach((cell, street) => cell.forEach((code) => items.push({ code, street })));
+  const shown = items.slice(-6);
+  if (!shown.length) return <div className="trail">&nbsp;</div>;
+  return (
+    <div className="trail qz" style={{ color: css(color) }}>
+      {items.length > shown.length && <span className="sep">… </span>}
+      {shown.map((it, n) => {
+        const age = shown.length - 1 - n;
+        const sep = n === 0 ? "" : it.street !== shown[n - 1].street ? " · " : " ";
+        const fold = it.code === "F";
+        return (
+          <span key={n}>
+            {sep && <span className="sep">{sep}</span>}
+            <span style={{ opacity: fold ? 0.4 : [1, 0.78, 0.6, 0.48, 0.38][Math.min(4, age)] }}>{it.code}</span>
+          </span>
+        );
+      })}
     </div>
   );
 }
@@ -57,22 +97,31 @@ function Seat({ s, i, L, v }: { s: SeatView; i: number; L: Layout; v: TableView 
   const toCall = v.toCall ?? 0;
   const potTotal = v.pot + v.seats.reduce((n, x) => n + x.bet, 0);
   return (
-    <div className={cls} style={{ left: slot.box.x, top: slot.box.y, width: slot.box.w, height: slot.box.h,
+    <div className={cls} data-seat={i} style={{ left: slot.box.x, top: slot.box.y, width: slot.box.w, height: slot.box.h,
       "--glow": css(cr.color) } as CSSProperties}>
-      <div className="seat-name">
-        <span className="glyph" style={{ color: css(cr.color) }}>{cr.glyph}</span>
+      <div className="seat-name qz">
+        <span className="glyph-wrap">
+          {s.mood && <span className={`mood mood-${s.mood}`} title={s.mood}>{MOOD_MARK[s.mood] ?? "·"}</span>}
+          {s.tell === "shell" && <span className="tell shell" aria-hidden="true">(</span>}
+          <span className={`glyph${s.tell === "shimmer" ? " t-shimmer" : ""}${s.tell === "flicker" ? " t-flicker" : ""}`}
+            data-glyph style={{ color: css(cr.color) }}>{cr.glyph}</span>
+          {s.tell === "shell" && <span className="tell shell" aria-hidden="true">)</span>}
+          {s.tell && <Tell kind={s.tell} />}
+        </span>
         <span className="name">{cr.name}</span>
         {s.dealer && <span className="dealer" title="dealer">◉</span>}
         {s.acting && !you && <span className="dots"><i>·</i><i>·</i><i>·</i></span>}
       </div>
-      {!L.phone && !you && <div className="seat-title">{cr.title}</div>}
-      <div className="seat-stack"><span className="chip">◘</span> {fmt(s.stack)}</div>
-      {!!s.won && <div className="won">+{fmt(s.won)}</div>}
-      <div className="cards">
-        {s.cards ? s.cards.map((c, k) => <CardFace key={k} c={c} size={size} />) : <span className="folded-note">folded</span>}
+      {!L.phone && !you && <div className="seat-title qz">{cr.title}</div>}
+      <div className="seat-stack qz" data-stack><span className="chip">◘</span> {fmt(s.stack)}</div>
+      <Trail cells={v.ledger.rows.find((r) => r.name === cr.name && r.glyph === cr.glyph)?.cells} color={cr.color} />
+      {!!s.won && <div className="won qz">+{fmt(s.won)}</div>}
+      <div className="cards" data-cards>
+        {s.cards ? s.cards.map((c, k) => <CardFace key={k} c={c} size={size} data={{ "data-card": k }} />)
+          : <span className="folded-note qz">folded</span>}
       </div>
       {you && v.handName && (
-        <div className="hand-info">
+        <div className="hand-info qz">
           {v.handName}
           {toCall > 0 && <> · need {Math.round((toCall / (potTotal + toCall)) * 100)}% to call</>}
         </div>
@@ -128,22 +177,22 @@ function Prompt({ v, L }: { v: TableView; L: Layout }) {
       {p.active || p.mode === "wait" ? (
         p.mode === "wait" ? (
           <>
-            <div className="info wait"><Markup text={p.info || " "} /></div>
-            <div className="input typeahead"><span className="caret-mark">&gt;</span> {p.input}<span className="cursor" /></div>
+            <div className="info wait qz"><Markup text={p.info || " "} /></div>
+            <div className="input typeahead qz"><span className="caret-mark">&gt;</span> {p.input}<span className="cursor" /></div>
           </>
         ) : (
 
         <>
-          <div className="info">{p.info.split(/ · | {2,}/).map((o, i) => <Markup key={i} text={o} className="opt" />)}</div>
-          <div className="options">
+          <div className="info qz">{p.info.split(/ · | {2,}/).map((o, i) => <Markup key={i} text={o} className="opt" />)}</div>
+          <div className="options qz">
             {p.options.split(/ {2,}/).map((o, i) => <Markup key={i} text={o} className="opt" />)}
           </div>
-          <div className="input"><span className="caret-mark">&gt;</span> {p.input}<span className="cursor" /></div>
-          <div className="feedback">{p.feedback ? <Markup text={p.feedback} /> : " "}</div>
+          <div className="input qz"><span className="caret-mark">&gt;</span> {p.input}<span className="cursor" /></div>
+          <div className="feedback qz">{p.feedback ? <Markup text={p.feedback} /> : " "}</div>
         </>
         )
       ) : (
-        <div className="input idle">
+        <div className="input idle qz">
           {p.options ? <Markup text={p.options} /> : <><span className="key">[enter]</span> next hand</>}
           <span className="cursor" />
         </div>
@@ -163,6 +212,25 @@ export default function TableScreen({ view: v, fontFamily }: { view: TableView; 
   const mood = useMemo(() => moodFromView(v), [v]);
   const [drawer, setDrawer] = useState(false);
   const [fullLog, setFullLog] = useState(false);
+  const sceneRef = useRef<HTMLDivElement>(null);
+  const fxRef = useRef<HTMLDivElement>(null);
+  const quiet = useRef<Box[] | null>(null);
+  const quietSig = useRef("");
+  useFx(sceneRef, fxRef, v, L);
+
+  // the world keeps the ground clear under every piece of readable text
+  useLayoutEffect(() => {
+    const root = sceneRef.current;
+    if (!root) return;
+    const o = root.getBoundingClientRect();
+    const boxes: Box[] = [];
+    root.querySelectorAll(".layer .qz").forEach((el) => {
+      const r = el.getBoundingClientRect();
+      if (r.width > 0) boxes.push({ x: r.left - o.left, y: r.top - o.top, w: r.width, h: r.height });
+    });
+    const sig = boxes.map((b) => `${b.x | 0},${b.y | 0},${b.w | 0},${b.h | 0}`).join(";");
+    if (sig !== quietSig.current) { quietSig.current = sig; quiet.current = boxes; }
+  });
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -180,17 +248,17 @@ export default function TableScreen({ view: v, fontFamily }: { view: TableView; 
   const recent = v.log.slice(-3);
 
   return (
-    <div className={`scene${L.phone ? " phone" : ""}${mood.allIn ? " tense" : ""}`}>
-      <WorldCanvas layout={L} mood={mood} fontFamily={fontFamily} />
+    <div ref={sceneRef} className={`scene${L.phone ? " phone" : ""}${mood.allIn ? " tense" : ""}${v.settings?.crt ? " crt" : ""}`}>
+      <WorldCanvas layout={L} mood={mood} fontFamily={fontFamily} quiet={quiet} />
 
       <div className="layer">
-        <div className="hud tl">
+        <div className="hud tl qz">
           <span>hand <b>{v.handNo}</b></span><span className="sep">·</span>
           <span>blinds <b>{fmt(v.blinds[0])}/{fmt(v.blinds[1])}</b></span><span className="sep">·</span>
           <span className="street">{v.street}</span>
           {!L.phone && <div className="place">{v.place}</div>}
         </div>
-        <div className="hud tr">
+        <div className="hud tr qz">
           <span>session <b className={v.session >= 0 ? "pos" : "neg"}>{v.session >= 0 ? "+" : "−"}{fmt(Math.abs(v.session))}</b></span>
           {!L.phone ? (
             <div className="hint">
@@ -202,22 +270,23 @@ export default function TableScreen({ view: v, fontFamily }: { view: TableView; 
           )}
         </div>
         {L.phone && v.log.length > 0 && (
-          <button type="button" className="latest" onClick={() => setFullLog(true)}><Markup text={v.log[v.log.length - 1]} /></button>
+          <button type="button" className="latest qz" onClick={() => setFullLog(true)}><Markup text={v.log[v.log.length - 1]} /></button>
         )}
 
         <div className="board" style={{ left: L.board.x, top: L.board.y }}>
-          {Array.from({ length: v.boardSize }, (_, i) => <CardFace key={i} c={v.board[i]} size={L.card} />)}
+          {Array.from({ length: v.boardSize }, (_, i) => <CardFace key={i} c={v.board[i]} size={L.card} data={{ "data-board": i }} />)}
         </div>
-        <div className="pot" style={{ left: L.pot.x, top: L.pot.y }}>
+        <div className="croupier" style={{ left: L.croupier.x, top: L.croupier.y }} title="the many-handed croupier">ж</div>
+        <div className="pot" data-pot style={{ left: L.pot.x, top: L.pot.y }}>
           <span className="label">pot</span> <span className="chip">◘</span> {fmt(potTotal)}
         </div>
 
         {v.seats.map((s, i) => L.seats[i] && <Seat key={i} s={s} i={i} L={L} v={v} />)}
         {v.seats.map((s, i) => {
           const slot = L.seats[i];
-          if (!slot || (!s.bet && !s.allIn)) return null;
+          if (!slot || !s.bet) return null;
           return (
-            <div key={i} className={`bet${s.allIn ? " allin" : ""}`} style={{ left: slot.bet.x, top: slot.bet.y }}>
+            <div key={i} className={`bet${s.allIn ? " allin" : ""}`} data-bet={i} style={{ left: slot.bet.x, top: slot.bet.y }}>
               {s.allIn && <span className="tag">ALL-IN</span>}
               <span className="chip">{s.allIn ? "◘" : "•"}</span> {fmt(s.bet)}
             </div>
@@ -227,15 +296,16 @@ export default function TableScreen({ view: v, fontFamily }: { view: TableView; 
         {!L.phone && logRoom > 230 && (
           <div className="log" style={{ maxWidth: Math.min(460, logRoom) }}>
             {recent.map((m, i) => (
-              <div key={v.log.length - recent.length + i} style={{ opacity: [0.4, 0.68, 1][i + 3 - recent.length] }}>
+              <div key={v.log.length - recent.length + i} className="qz" style={{ opacity: [0.4, 0.68, 1][i + 3 - recent.length] }}>
                 <Markup text={m} />
               </div>
             ))}
           </div>
         )}
-        {L.ledgerFloats && <Ledger ledger={v.ledger} className="floating" />}
         <Prompt v={v} L={L} />
+        <div ref={fxRef} className="fx" aria-hidden="true" />
       </div>
+      {v.settings?.crt && <div className="crt-overlay" aria-hidden="true" />}
 
       <aside className={`drawer${drawer ? " open" : ""}`} aria-hidden={!drawer}>
         <h2>The Seer&apos;s read</h2>

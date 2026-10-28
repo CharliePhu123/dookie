@@ -1,6 +1,7 @@
 // The game's handle on the bots. Promise-based: `await bots.act(state)`. Runs them in a Web
 // Worker in the browser, or in-process (tests, or browsers without Workers).
 import type { Thought } from "@/bots/adaptive";
+import type { Mood } from "@/bots/bot";
 import type { ModelJSON } from "@/bots/opponents";
 import type { Card } from "@/engine/cards";
 import type { HandEvent } from "@/engine/events";
@@ -86,6 +87,16 @@ export class BotClient {
     const fallback: BotReply = { action: state.toCall ? FOLD : CHECK, ms: this.timeoutMs, thought: null };
     return this.request<BotReply>({ type: "act", reqId: 0, state }, (m) =>
       m.type === "action" ? { action: m.action, ms: m.ms, thought: m.thought } : fallback, fallback);
+  }
+
+  /** Change how a creature feels (and so how it plays). */
+  mood(id: string, mood: Mood | null) {
+    this.t.send({ type: "mood", id, mood });
+  }
+
+  /** Each live bot's hand strength right now, 0..1 (preflop percentile, then equity vs one random hand). */
+  strength(): Promise<Record<string, number>> {
+    return this.request({ type: "strength", reqId: 0 }, (m) => (m.type === "strength" ? m.strength : {}), {});
   }
 
   /** The AdaptiveBots' opponent models, to persist. */

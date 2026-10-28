@@ -7,6 +7,7 @@ import type { Action, GameState } from "@/engine/game";
 import type { Variant } from "@/engine/variant";
 import type { ModelJSON } from "@/bots/opponents";
 import type { Thought } from "@/bots/adaptive";
+import type { Mood } from "@/bots/bot";
 
 export interface SeatSpec {
   id: string;
@@ -24,9 +25,13 @@ export type ToWorker =
   | { type: "deal"; id: string; hole: Card[] }
   | { type: "observe"; events: HandEvent[] }
   | { type: "act"; reqId: number; state: GameState }
-  | { type: "save"; reqId: number };
+  | { type: "save"; reqId: number }
+  | { type: "mood"; id: string; mood: Mood | null }
+  /** how strong each bot's hand is right now, 0..1, for tells */
+  | { type: "strength"; reqId: number };
 
 export type FromWorker =
   | { type: "action"; reqId: number; action: Action; ms: number; thought: Thought | null }
   | { type: "saved"; reqId: number; models: Record<string, ModelJSON> }
+  | { type: "strength"; reqId: number; strength: Record<string, number> }
   | { type: "error"; reqId: number | null; message: string };

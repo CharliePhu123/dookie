@@ -2,12 +2,15 @@
 // lines in the game's voice, the ledger, and the pacing between beats (a bot "thinking", the
 // pause after the flop, the beat before the pot is pushed). Speed 0 means instant.
 import { OpponentModel, type ModelJSON } from "@/bots/opponents";
+import type { Mood } from "@/bots/bot";
 import type { Card } from "@/engine/cards";
 import type { HandEvent } from "@/engine/events";
 import { Rng } from "@/engine/rng";
 import type { HandState } from "@/engine/table";
 import { boardSize, type Variant } from "@/engine/variant";
+import { DEAL_STAGGER, FX_MS, type Fx, type FxEvent } from "./fx";
 import { LedgerBuilder, type Ledger } from "./ledger";
+import { TELLS, tellShows, type MoodChange } from "./moods";
 import { Narrator } from "./narrator";
 import { YOU, kindOf, type Presenter } from "./session";
 
@@ -24,6 +27,10 @@ export interface SeatModel {
   allIn: boolean;
   /** chips won this hand, shown at the end */
   won: number;
+  /** a small idle animation that leaks hand strength (the gnashback drools), or null */
+  tell: string | null;
+  /** tilted, on a heater, wary, short-stacked: changes how it plays */
+  mood: Mood | null;
 }
 
 export interface ReadModel {
@@ -65,6 +72,10 @@ export interface GameView {
   toCall: number;
   /** drives tension lighting: pot relative to the average stack, anyone all in, your turn */
   tension: { pot: number; allIn: boolean; yourTurn: boolean };
+  /** animation and sound cues, oldest first; consumers remember the last id they handled */
+  fx: FxEvent[];
+  /** display settings */
+  settings: { crt: boolean };
 }
 
 /** Milliseconds at 1x speed. */
@@ -74,6 +85,9 @@ const BEATS = {
 };
 
 const LOG_KEEP = 200;
+const FX_KEEP = 64;
+const BOARD_STAGGER = 140;
+const WIN_STAGGER = 350;
 
 export class Director implements Presenter {
   view: GameView;
@@ -83,21 +97,44 @@ export class Director implements Presenter {
   private ledger = new LedgerBuilder();
   private flavor: Rng;
   private wake: (() => void) | null = null;
+  private fxId = 0;
+  /** no animations, only end states (prefers-reduced-motion) */
+  reducedMotion = false;
+  /** every cue as it's issued (the synth listens here) */
+  onFx: (e: FxEvent) => void = () => {};
 
   constructor(private v: Variant, private ids: string[], seed: string, private onChange: () => void = () => {}) {
     this.flavor = new Rng(`${seed}/flavor`);
     this.narrator = new Narrator(v, Object.fromEntries(ids.map((p) => [p, kindOf(p)])), YOU, this.flavor);
     this.view = {
       handNo: 0, blinds: [v.smallBlind, v.bigBlind], street: "", board: [], boardSize: boardSize(v), pot: 0,
-      seats: ids.map((id) => ({ id, kind: kindOf(id), stack: v.startingStack, bet: 0, cards: null, dealer: false, acting: false, allIn: false, won: 0 })),
+      seats: ids.map((id) => ({ id, kind: kindOf(id), stack: v.startingStack, bet: 0, cards: null, dealer: false, acting: false, allIn: false, won: 0, tell: null, mood: null })),
       log: [], ledger: this.ledger.ledger,
       prompt: { mode: "wait", info: "", options: "", input: "", feedback: null },
       read: null, session: 0, handName: null, toCall: 0, tension: { pot: 0, allIn: false, yourTurn: false },
+      fx: [], settings: { crt: false },
     };
   }
 
   private seat(id: string) {
     return this.view.seats.find((s) => s.id === id)!;
+  }
+
+  private seatIndex(id: string) {
+    return this.view.seats.findIndex((s) => s.id === id);
+  }
+
+  /** Issue a cue; returns when it will have finished, in ms from now at the current speed. */
+  cue(fx: Fx, delay = 0): number {
+    const animate = this.speed > 0 && !this.reducedMotion;
+    const e: FxEvent = {
+      id: ++this.fxId, at: typeof performance !== "undefined" ? performance.now() : 0, fx,
+      ms: animate ? FX_MS[fx.kind] / this.speed : 0, delay: animate ? delay / this.speed : 0,
+    };
+    this.view.fx.push(e);
+    if (this.view.fx.length > FX_KEEP) this.view.fx.splice(0, this.view.fx.length - FX_KEEP);
+    this.onFx(e);
+    return e.delay + e.ms;
   }
 
   private changed() {
@@ -133,6 +170,7 @@ export class Director implements Presenter {
     for (const s of this.view.seats) s.acting = s.id === id;
     this.view.prompt = { ...this.view.prompt, mode: "wait", info: `{{K|waiting on}} ${this.narrator.who(id)}{{K|...}}` };
     this.view.toCall = 0;
+    this.cue({ kind: "think", seat: this.seatIndex(id) });
     this.changed();
     await this.sleep(BEATS.thinkMin + this.flavor.random() * (BEATS.thinkMax - BEATS.thinkMin));
   }
@@ -164,19 +202,114 @@ export class Director implements Presenter {
     this.changed();
   }
 
+  /** Show tells from each creature's true hand strength (each creature has its own reliability). */
+  strengths(st: Record<string, number>) {
+    for (const s of this.view.seats) {
+      const def = TELLS[s.kind];
+      s.tell = def && s.cards && st[s.id] !== undefined && tellShows(def, st[s.id], this.flavor) ? def.tell : null;
+    }
+    this.changed();
+  }
+
+  /** Moods changed after a hand: mark the seats and say so in the log. */
+  moods(changes: MoodChange[], line: (c: MoodChange) => string | null) {
+    for (const c of changes) {
+      this.seat(c.id).mood = c.mood;
+      const l = line(c);
+      if (l) this.view.log.push(l);
+    }
+    if (changes.length) this.changed();
+  }
+
+  /** A creature busted and bought back in, before the next hand. */
+  bust(id: string) {
+    this.cue({ kind: "bust", seat: this.seatIndex(id) });
+    this.changed();
+  }
+
   async present(events: HandEvent[], state: HandState): Promise<void> {
     for (const e of events) {
+      const before = this.view.seats.map((s) => s.bet);
       this.apply(e, state);
       this.ledger.observe(e);
       this.view.ledger = this.ledger.ledger;
       const lines = this.narrator.lines([e]);
       if (lines.length) this.view.log.push(...lines);
       this.updateDerived(state);
+      const fxDone = this.cues(e, state, before);
       this.changed();
       const beat = e.type === "action" ? (e.player === YOU ? BEATS.yourAction : BEATS.botAction) : BEATS[e.type];
-      await this.sleep(beat);
+      await this.sleep(Math.max(beat, fxDone * this.speed));   // sleep() takes 1x ms
     }
   }
+
+  /** Animation cues for one event; returns ms until the last one finishes (at the current speed). */
+  private cues(e: HandEvent, state: HandState, betsBefore: number[]): number {
+    const V = this.view;
+    let done = 0;
+    const at = (ms: number) => { done = Math.max(done, ms); };
+    switch (e.type) {
+      case "deal": {
+        // one card at a time around the table, starting left of the button
+        const order = [...state.seats.slice(1), state.seats[0]].map((id) => this.seatIndex(id));
+        let i = 0;
+        for (let k = 0; k < e.holeCards; k++) for (const seat of order) at(this.cue({ kind: "deal", seat, k, n: e.holeCards }, DEAL_STAGGER * i++));
+        break;
+      }
+      case "blinds":
+        V.seats.forEach((s, seat) => { if (s.bet) at(this.cue({ kind: "bet", seat, amount: s.bet, allIn: s.allIn })); });
+        break;
+      case "street": {
+        if (betsBefore.some((b) => b > 0)) at(this.cue({ kind: "collect" }));
+        const fresh = e.board.length - this.boardShown;
+        for (let j = 0; j < fresh; j++) {
+          const index = this.boardShown + j;
+          at(this.cue({ kind: "board", index, card: e.board[index] }, FX_MS.collect * +betsBefore.some((b) => b > 0) + BOARD_STAGGER * j));
+        }
+        this.boardShown = e.board.length;
+        break;
+      }
+      case "action": {
+        const seat = this.seatIndex(e.player);
+        if (e.action === "fold") at(this.cue({ kind: "fold", seat }));
+        else if (e.action === "check") at(this.cue({ kind: "check", seat }));
+        else at(this.cue({ kind: "bet", seat, amount: V.seats[seat].bet - betsBefore[seat], allIn: e.allIn }));
+        if (e.allIn) at(this.cue({ kind: "allIn", seat }));
+        break;
+      }
+      case "showdown": {
+        if (betsBefore.some((b) => b > 0)) at(this.cue({ kind: "collect" }));
+        const fresh = e.board.length - this.boardShown;   // all-in run-outs deal the rest here
+        for (let j = 0; j < fresh; j++) {
+          const index = this.boardShown + j;
+          at(this.cue({ kind: "board", index, card: e.board[index] }, BOARD_STAGGER * j));
+        }
+        this.boardShown = e.board.length;
+        for (const p of Object.keys(e.hands)) if (p !== YOU) at(this.cue({ kind: "reveal", seat: this.seatIndex(p) }));
+        this.shown = e.hands;
+        break;
+      }
+      case "hand_end": {
+        if (betsBefore.some((b) => b > 0)) at(this.cue({ kind: "collect" }));
+        let k = 0;
+        V.seats.forEach((s, seat) => {
+          if (!s.won) return;
+          const hole = this.shown[s.id];
+          const category = hole ? this.narrator.category(hole, V.board) : null;
+          at(this.cue({ kind: "win", seat, amount: s.won, hand: hole ? this.narrator.handName(hole, V.board) : null, category }, WIN_STAGGER * k++));
+        });
+        break;
+      }
+      case "hand_start":
+        this.boardShown = 0;
+        this.shown = {};
+        break;
+    }
+    return done;
+  }
+
+  private boardShown = 0;
+  private shown: Record<string, Card[]> = {};
 
   private apply(e: HandEvent, state: HandState) {
     const V = this.view;
@@ -186,7 +319,7 @@ export class Director implements Presenter {
         V.street = "PRE";
         V.board = [];
         V.pot = 0;
-        for (const s of V.seats) Object.assign(s, { bet: 0, cards: null, dealer: s.id === e.button, acting: false, allIn: false, won: 0 });
+        for (const s of V.seats) Object.assign(s, { bet: 0, cards: null, dealer: s.id === e.button, acting: false, allIn: false, won: 0, tell: null });
         break;
       case "deal":
         for (const s of V.seats) s.cards = s.id === YOU ? state.hole[YOU].slice() : new Array(e.holeCards).fill(null);
@@ -205,7 +338,9 @@ export class Director implements Presenter {
         for (const q of V.seats) { q.stack = e.stacks[q.id]; q.bet = e.bets[q.id]; }
         s.acting = false;
         s.allIn = e.allIn;
-        if (e.action === "fold") s.cards = null;
+        // they've acted: stop saying we're waiting on them (think() names the next one)
+        if (V.prompt.mode === "wait") V.prompt = { ...V.prompt, info: "" };
+        if (e.action === "fold") { s.cards = null; s.tell = null; }
         V.pot = e.potAfter;
         break;
       }
@@ -219,9 +354,10 @@ export class Director implements Presenter {
           s.stack = e.stacks[s.id];
           s.bet = 0;
           s.acting = false;
+          s.tell = null;
           s.won = e.pots.reduce((a, pot) => a + (pot.won[s.id] ?? 0), 0);
         }
-        V.pot = 0;
+        // the pot stays on show while it's paid out; the next hand_start clears it
         break;
     }
   }
@@ -234,7 +370,7 @@ export class Director implements Presenter {
     const stacks = V.seats.map((s) => s.stack + s.bet);
     const avg = stacks.reduce((a, b) => a + b, 0) / Math.max(1, stacks.length);
     V.tension = {
-      pot: V.pot / Math.max(1, avg),
+      pot: state.done ? 0 : V.pot / Math.max(1, avg),
       allIn: V.seats.some((s) => s.allIn && s.cards !== null) && !state.done,
       yourTurn: V.prompt.mode === "act",
     };

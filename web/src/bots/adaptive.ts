@@ -10,7 +10,7 @@ import {
 } from "@/engine/game";
 import { Rng } from "@/engine/rng";
 import { numStreets, type Variant } from "@/engine/variant";
-import { choose, type Bot, type BotOptions } from "./bot";
+import { SHORT_SHOVE, choose, type Bot, type BotOptions, type Mood } from "./bot";
 import { OpponentModel } from "./opponents";
 
 export const ADAPTIVE_DEFAULTS = {
@@ -49,7 +49,10 @@ export interface Thought {
 }
 
 export class AdaptiveBot implements Bot {
-  readonly p: AdaptiveParams;
+  /** current knobs: the base params, adjusted by mood */
+  p: AdaptiveParams;
+  private base: AdaptiveParams;
+  private mood: Mood | null = null;
   readonly rng: Rng;
   readonly eq: EquityEngine;
   readonly model = new OpponentModel();
@@ -59,7 +62,7 @@ export class AdaptiveBot implements Bot {
   lastThought: Thought | null = null;
 
   constructor(readonly v: Variant, o: BotOptions = {}) {
-    this.p = { ...ADAPTIVE_DEFAULTS, ...(o.params ?? {}) };
+    this.p = this.base = { ...ADAPTIVE_DEFAULTS, ...(o.params ?? {}) };
     this.rng = o.rng ?? new Rng();
     this.eq = new EquityEngine(v, undefined, this.rng);
     this.iters = o.iters ?? 300;
@@ -68,6 +71,16 @@ export class AdaptiveBot implements Bot {
 
   observe(e: HandEvent) {
     this.model.observe(e);
+  }
+
+  /** Tilted: looser and bluffier. On a heater: bolder. Wary: calls wider. Short: shoves or folds preflop. */
+  setMood(m: Mood | null) {
+    this.mood = m;
+    const b = this.base;
+    this.p = m === "tilted" ? { ...b, bet_rel: b.bet_rel - 0.1, bluff_scale: b.bluff_scale * 1.5, margin: b.margin - 0.04 }
+      : m === "heater" ? { ...b, bet_rel: b.bet_rel - 0.05, bluff_scale: b.bluff_scale * 1.25 }
+      : m === "wary" ? { ...b, margin: b.margin - 0.05, defend: 1 }
+      : b;
   }
 
   act(s: GameState): Action {
@@ -81,6 +94,10 @@ export class AdaptiveBot implements Bot {
 
   private decide(s: GameState): Action {
     this.model.me = s.me;
+    if (this.mood === "short" && s.street === 0 && canRaise(s) && this.eq.percentile(s.hole) >= SHORT_SHOVE) {
+      this.lastThought = null;
+      return raiseTo(s, s.maxRaiseTo);
+    }
     const opps = liveOpponents(s).map((pv) => pv.id);
     const p = this.p;
     const ranges: OppRange[] = p.use_ranges

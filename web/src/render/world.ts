@@ -32,13 +32,13 @@ const RAMPS: number[][] = [
   ramp(" .,:;=+*#%@"),    // rock
   ramp(" ..,,:;"),        // floor
   ramp(" .,::;;"),        // felt
-  ramp(" .:=+*#%"),       // stone rim
-  ramp(" .,:;+x%"),       // rug
+  ramp(" .:-=≡"),         // stone rim
+  ramp("  ..,:;"),        // rug
   ramp(" .-~~≈"),         // water
   ramp(" .-~=≈"),         // sky / dunes
 ];
 // how strongly each material's brightness drives glyph density
-const EXPOSE = [2.3, 2.6, 1.35, 1.9, 2.1, 2.0, 1, 2];
+const EXPOSE = [2.3, 2.6, 1.35, 1.6, 1.6, 2.0, 1, 2];
 const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5].map((v) => (v + 0.5) / 16 - 0.5);
 const SPACE = 32;
 const C = (s: string) => s.codePointAt(0)!;
@@ -93,6 +93,9 @@ export class World {
   private fog: Float32Array;
   private fogTick = -1;
   private seatLights = new Map<number, LightMap>();
+  /** 0..1 per cell: how clear the ground must stay under readable text (1 = no glyph at all) */
+  private quiet: Float32Array;
+  private dither: Float32Array;
 
   constructor(readonly L: Layout, readonly seed = 7) {
     const { cols, rows } = L;
@@ -110,6 +113,9 @@ export class World {
     this.color = new Uint16Array(n);
     this.bg = new Uint8ClampedArray(n * 4);
     this.fog = new Float32Array(((cols >> 2) + 3) * ((rows >> 1) + 3));
+    this.quiet = new Float32Array(n);
+    this.dither = new Float32Array(n);
+    for (let k = 0; k < n; k++) this.dither[k] = hash(k % cols, (k / cols) | 0, seed + 101);
     const water: number[] = [];
     this.build(water);
     this.water = Int32Array.from(water);
@@ -142,7 +148,6 @@ export class World {
     const pX = this.passageX();
     const inSeat = (x: number, y: number, pad: number) => L.seats.some(({ box: b }) =>
       x > b.x - pad && x < b.x + b.w + pad && y > b.y - pad && y < b.y + b.h + pad);
-    const p = L.prompt;
     const rug0 = 16 * scale, rug1 = 84 * scale;
 
     for (let j = 0; j < rows; j++) {
@@ -201,10 +206,6 @@ export class World {
           alb = 0.42 + 0.3 * n1 + (salt > 0.62 ? (salt - 0.62) * 1.5 : 0);
           alb *= 0.45 + 0.55 * smoothstep(0, 46 * scale, e);
           if (inSeat(x, y, 10)) alb *= 0.55;
-          // keep the ground quiet under the prompt and the log
-          const under = Math.max(smoothstep(p.y - 40, p.y + 10, y) * (1 - smoothstep(p.x + p.w, p.x + p.w + 60, x)) * smoothstep(p.x - 60, p.x, x),
-            L.phone ? 0 : smoothstep(H - 150, H - 100, y) * (1 - smoothstep(380, 480, x)));
-          alb *= 1 - 0.65 * under;
           if (e > rug0 && e < rug1) {
             m = RUG;
             const band = e > rug1 - 12 * scale || e < rug0 + 5 * scale;
@@ -335,6 +336,28 @@ export class World {
 
   private pointLight(x: number, y: number, r: number) { return this.ellipseLight(x, y, r, r * 0.8); }
 
+  /**
+   * Keeps the ground clear under readable text: no glyphs inside these boxes (CSS px), fading
+   * out over a few pixels with a dither so the clearing has no hard edge.
+   */
+  setQuiet(boxes: { x: number; y: number; w: number; h: number }[]) {
+    const { quiet, cols, rows, L } = this;
+    quiet.fill(0);
+    const pad = 2, fall = 8;
+    for (const b of boxes) {
+      const i0 = Math.max(0, Math.floor((b.x - pad - fall) / L.cell.w)), i1 = Math.min(cols - 1, Math.ceil((b.x + b.w + pad + fall) / L.cell.w));
+      const j0 = Math.max(0, Math.floor((b.y - pad - fall) / L.cell.h)), j1 = Math.min(rows - 1, Math.ceil((b.y + b.h + pad + fall) / L.cell.h));
+      for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
+        // distance from the cell to the padded box, in px (0 when it overlaps)
+        const x0 = i * L.cell.w, x1 = x0 + L.cell.w, y0 = j * L.cell.h, y1 = y0 + L.cell.h;
+        const dx = Math.max(0, b.x - pad - x1, x0 - (b.x + b.w + pad)), dy = Math.max(0, b.y - pad - y1, y0 - (b.y + b.h + pad));
+        const s = 1 - smoothstep(0, fall, Math.hypot(dx, dy));
+        const k = j * cols + i;
+        if (s > quiet[k]) quiet[k] = s;
+      }
+    }
+  }
+
   // ---- each step ----------------------------------------------------------------------
 
   step(t: number, mood: Mood) {
@@ -440,13 +463,14 @@ export class World {
           const q = Math.floor(Math.min(0.999, Math.max(0, lum * EXPOSE[m] + d / rp.length)) * rp.length);
           code = rp[q];
         }
-        glyph[k] = code;
+        const qz = this.quiet[k];
+        glyph[k] = qz > 0 && this.dither[k] < qz ? SPACE : code;
         const gain = (m === FELT ? 1.0 : 1.35) / Math.max(0.12, Math.max(r, g, b) * 0.6 + 0.4);
         color[k] = (Math.min(15, Math.round(r * gain * 15)) << 8) | (Math.min(15, Math.round(g * gain * 15)) << 4) |
           Math.min(15, Math.round(b * gain * 15));
-        const gl = glow[k];
-        bg[k * 4] = (r * gl + fog * 0.11) * 255; bg[k * 4 + 1] = (g * gl + fog * 0.14) * 255 + 3;
-        bg[k * 4 + 2] = (b * gl + fog * 0.17) * 255 + 3; bg[k * 4 + 3] = 255;
+        const gl = glow[k] * (1 - 0.3 * qz), fg2 = 1 - 0.5 * qz;
+        bg[k * 4] = (r * gl + fog * 0.11 * fg2) * 255; bg[k * 4 + 1] = (g * gl + fog * 0.14 * fg2) * 255 + 3;
+        bg[k * 4 + 2] = (b * gl + fog * 0.17 * fg2) * 255 + 3; bg[k * 4 + 3] = 255;
       }
     }
   }
@@ -455,6 +479,7 @@ export class World {
   private put(i: number, j: number, ch: number, r: number, g: number, b: number) {
     if (i < 0 || j < 0 || i >= this.cols || j >= this.rows) return;
     const k = j * this.cols + i;
+    if (this.quiet[k] > 0.25) return;
     this.glyph[k] = ch;
     this.color[k] = (Math.min(15, Math.round(r * 15)) << 8) | (Math.min(15, Math.round(g * 15)) << 4) | Math.min(15, Math.round(b * 15));
   }

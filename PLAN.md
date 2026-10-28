@@ -17,8 +17,9 @@ to Freehold Games, so none of them ship in this game (see [Naming](#naming-and-i
 | 2 | Engine: seeded RNG, equity, step-driven table state machine | **done**: 800 Python hands replay event for event; 20,000 random hands plus a fast-check property conserve chips; equity matches Python |
 | 3 | Bots in TypeScript, in a Worker | **done**: heads-up +313 ±60 bb/100 vs SimpleEquityBot and +130 ±26 vs Exploiter over 6,000 hands (Python: +249 ±63, +108 ±28); the Worker runs in Chromium |
 | 4 | Playable MVP | **done**: you play hold'em against five creatures by typing play.py-style commands, in the ASCII-shader cave; saves after every hand |
-| 5 | Ship it (PR to `main`, production deploy) | next |
-| 6+ | everything below | not started |
+| 5 | Ship it (PR to `main`, production deploy) | **done**: PR #2 merged; production deploys from `main` |
+| 6 | Juice | **done**: animations, sound, tells, moods, typed settings, crisp rendering |
+| 7+ | everything below | not started |
 
 What the phase 0 mock shows (screenshot taken from `npm run build && npm start`), and what
 needs fixing as we go:
@@ -306,7 +307,7 @@ The game ships on Vercel from the start; nothing in phases 0–8 needs a server.
 | 3 | **done.** Port sparring bots, opponent model, AdaptiveBot with look-ahead; the Worker; a headless `npm run sim` | TS AdaptiveBot beats TS SimpleEquityBot heads-up by a margin inside Python's CI (+249 ±63 bb/100), and decisions stay under budget |
 | 4 | **done.** **Playable MVP**: Quick Play; director, typed commands (no bet slider, by request), log text generator, odds overlay, rebuys, persistence; render fixes from the mock review | You can play a full session in the browser, keyboard or mouse, and the Seer remembers you on reload |
 | 5 | Ship it on Vercel (see [Deploying on Vercel](#deploying-on-vercel)): `main` branch, Git-connected project with root `web/`, preview deploys per PR, Analytics and Speed Insights; GitHub Actions for lint, vitest, Python tests and build | Production URL works on desktop and mobile; every PR gets a working preview |
-| 6 | Juice: sprites and tweens, every animation above, sound, screen shake, rare-hand fanfares, tells, moods, CRT mode, speed and reduced motion | Feels alive at 60 fps on a laptop; reduced motion leaves no animation running |
+| 6 | **done.** Juice: sprites and tweens, every animation above, sound, screen shake, rare-hand fanfares, tells, moods, CRT mode, speed and reduced motion | Feels alive at 60 fps on a laptop; reduced motion leaves no animation running |
 | 7 | The Pilgrimage: map generation, regions and variants, new creatures and bosses, merchant and relics, shrines, sit & go, permadeath, tombstone and chronicle | A full run from caravanserai to Arbiter is winnable, losable, and different each seed |
 | 8 | Meta: daily seed and share string, Replay Theatre and replay URLs, `next/og` share cards, hand-history export, feats, bestiary, Lessons from the Seer, mobile portrait layout, CP437 font | All of the above work from the static deploy (share cards are the only functions) |
 | 9 | Optional online: daily leaderboard and server-stored replays (Upstash Redis via the Vercel Marketplace, route handlers) | Leaderboard is live and rejects results that don't replay from their seed + actions |
@@ -397,3 +398,16 @@ Phase 4 is the first thing worth playing. Phases 6–8 can run in parallel once 
 - **Not yet:** Duel mode and settings (speed, opponents, variant) have no UI; the defaults are
   hold'em, five creatures, 50/100 blinds and 10,000 chips. A world glyph can show through the
   prompt text. No card or chip movement yet (phase 6).
+
+## Notes from phase 6
+
+- **Cues:** `web/src/game/fx.ts` is the contract. The director issues cues per engine event and
+  waits for them; the screen animates them (`components/useFx.ts`) and `audio/synth.ts` plays them.
+- **Settings are typed**, like everything else: `speed 1/2/4/instant`, `sound on/off`, `volume N`,
+  `crt on/off`, `help`. They work mid-hand without using your turn.
+- **Tells** come from each creature's true hand strength, computed in the worker (which never
+  sees your cards), shown at its own reliability. **Moods** (tilted, heater, wary, short) change
+  how bots play via `setMood()`.
+- **Sharpness:** the world's per-cell glow is scaled by whole device pixels with no smoothing,
+  and the world keeps the ground clear under every piece of readable text.
+- **The ledger** is now a quiet action trail under each seat; the full grid lives in the Tab drawer.
