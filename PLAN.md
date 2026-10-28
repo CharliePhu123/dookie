@@ -14,8 +14,9 @@ to Freehold Games, so none of them ship in this game (see [Naming](#naming-and-i
 |---|---|---|
 | 0 | Scaffold Next.js app, palette, canvas glyph grid, static table mock | **done**: `npm run dev` shows the mock table |
 | 1 | Port cards, variant, evaluator | **done**: vitest passes, including exact parity with Python on 5,000 hands per variant |
-| 2 | Engine: seeded RNG, equity, step-driven table state machine | next |
-| 3+ | everything below | not started |
+| 2 | Engine: seeded RNG, equity, step-driven table state machine | **done**: 800 Python hands replay event for event; 20,000 random hands plus a fast-check property conserve chips; equity matches Python |
+| 3 | Bots in TypeScript, in a Worker | next |
+| 4+ | everything below | not started |
 
 What the phase 0 mock shows (screenshot taken from `npm run build && npm start`), and what
 needs fixing as we go:
@@ -299,7 +300,7 @@ The game ships on Vercel from the start; nothing in phases 0–8 needs a server.
 |---|---|---|
 | 0 | Scaffold, palette, glyph grid, static table mock | **done** |
 | 1 | Port cards, variant, evaluator | **done** |
-| 2 | Seeded RNG; port equity; game types; step-driven table engine with side pots and the real short-all-in rule | Equities match Python fixtures within MC noise; chips sum to zero over 10k random hands (property tests with fast-check); full-hand parity with the Python engine on fixed decks and action lists |
+| 2 | **done.** Seeded RNG; port equity; game types; step-driven table engine with side pots and the real short-all-in rule | Equities match Python fixtures within MC noise; chips sum to zero over 10k random hands (property tests with fast-check); full-hand parity with the Python engine on fixed decks and action lists |
 | 3 | Port sparring bots, opponent model, AdaptiveBot with look-ahead; the Worker; a headless `npm run sim` | TS AdaptiveBot beats TS SimpleEquityBot heads-up by a margin inside Python's CI (+249 ±63 bb/100), and decisions stay under budget |
 | 4 | **Playable MVP**: Quick Play and Duel; director, input, bet slider, log text generator, odds overlay, rebuys, persistence; render fixes from the mock review | You can play a full session in the browser, keyboard or mouse, and the Seer remembers you on reload |
 | 5 | Ship it on Vercel (see [Deploying on Vercel](#deploying-on-vercel)): `main` branch, Git-connected project with root `web/`, preview deploys per PR, Analytics and Speed Insights; GitHub Actions for lint, vitest, Python tests and build | Production URL works on desktop and mobile; every PR gets a working preview |
@@ -353,3 +354,18 @@ Phase 4 is the first thing worth playing. Phases 6–8 can run in parallel once 
 2. Pilgrimage first or polish first? This plan ships Quick Play (phase 4) first, then juice (6),
    then the run (7).
 3. Is an online leaderboard (phase 9) wanted at all, given it's the only part that needs a server?
+
+## Notes from phase 2
+
+- **Python engine fix:** `pokerbot/engine.py` used to deal and announce the next street after
+  everyone else had folded (a `street` event with a card nobody should see). It now stops first.
+  Chip results are unchanged; the TS engine behaves the same way.
+- **Rules:** `web/src/engine/table.ts` takes `STANDARD_RULES` (real short-all-in and odd-chip rules,
+  the default) or `PYTHON_RULES` (matches `pokerbot/engine.py`, used by the parity test).
+- **Bot weakness found while testing:** postflop "strict" range cutoffs are re-sampled from only
+  150 hands on every equity call, so a single river equity can swing from 0.05 to 0.17 between
+  calls on the same spot (sd about 0.03). The parity test averages 20 calls to compare
+  expectations. Worth fixing in both Python and TS before tuning: cache the cutoff per board and
+  strictness, or sample more hands.
+- **Regenerating fixtures:** `python3 scripts/make_fixtures.py` writes all three fixture files;
+  the evaluator fixture is byte-for-byte unchanged by the new sections.

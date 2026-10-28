@@ -66,14 +66,14 @@ class Table:
                          "bets": dict(street_bet), "pot": sum(total_in.values())}, history)
 
         for street, ncards in enumerate(v.streets):
+            if len(seats) - len(folded) < 2:
+                break   # everyone else folded: don't deal (or announce) the next street
             for _ in range(ncards):
                 board.append(deck.pop())
             if street > 0:
                 for p in seats:
                     street_bet[p] = 0
                 self._broadcast({"type": "street", "street": street, "board": tuple(board)}, history)
-            if len(seats) - len(folded) < 2:
-                break
             start = (0 if n == 2 else 3 % n) if street == 0 else 1
             current = max(street_bet.values())
             last_raise = v.big_blind
