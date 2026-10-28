@@ -5,11 +5,21 @@ import type { HandEvent } from "@/engine/events";
 import type { Action, GameState } from "@/engine/game";
 import type { Rng } from "@/engine/rng";
 
+/** How a creature feels, which changes how it plays (see game/moods.ts). */
+export type Mood = "tilted" | "heater" | "wary" | "short";
+
 export interface Bot {
   act(s: GameState): Action;
   observe?(e: HandEvent): void;
   onDeal?(hole: readonly Card[]): void;
+  setMood?(m: Mood | null): void;
 }
+
+/** How much looser a mood makes a bot: lower thresholds to bet, raise and call. */
+export const LOOSENESS: Record<Mood, number> = { tilted: 0.08, heater: 0.05, wary: 0.04, short: 0 };
+
+/** Short-stacked preflop: shove hands at or above this starting-hand percentile, otherwise carry on. */
+export const SHORT_SHOVE = 0.55;
 
 export interface BotOptions {
   /** randomness for this bot; pass a fork of the session Rng for reproducible games */

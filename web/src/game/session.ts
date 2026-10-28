@@ -1,6 +1,7 @@
 // A sitting at the table: who's playing, their chips between hands, the button, rebuys.
 // It runs one hand at a time, asking the bots (through the worker) and the human (through
 // a promise) for decisions, and hands every step's events to a Presenter that paces them.
+import type { Mood } from "@/bots/bot";
 import type { ModelJSON } from "@/bots/opponents";
 import type { HandEvent } from "@/engine/events";
 import type { Action, GameState } from "@/engine/game";
@@ -47,6 +48,8 @@ export interface Presenter {
   think(id: string): Promise<void>;
   /** A line for the log that isn't an engine event (rebuys and the like). */
   note(markup: string): void;
+  /** Each live creature's true hand strength (0..1), after the deal and each street: for tells. */
+  strengths?(s: Record<string, number>): void;
 }
 
 export type HumanInput = (g: GameState) => Promise<Action>;
@@ -121,6 +124,7 @@ export class Session {
     this.state = step.state;
     this.bots.observe(step.events);
     await show.present(step.events, step.state);
+    await this.readTells(show, step.events);
     while (!step.state.done) {
       const g = decision(step.state)!;
       let action: Action;
@@ -134,10 +138,20 @@ export class Session {
       this.state = step.state;
       this.bots.observe(step.events);
       await show.present(step.events, step.state);
+      if (!step.state.done) await this.readTells(show, step.events);
     }
     this.bank = { ...this.bank, ...step.state.stacks };
     this.handNo++;
     return step.state;
+  }
+
+  private async readTells(show: Presenter, events: HandEvent[]) {
+    if (show.strengths && events.some((e) => e.type === "deal" || e.type === "street")) show.strengths(await this.bots.strength());
+  }
+
+  /** Change how a creature feels, and so how its bot plays. */
+  setMood(id: string, mood: Mood | null) {
+    this.bots.mood(id, mood);
   }
 
   async save(): Promise<SessionSave> {

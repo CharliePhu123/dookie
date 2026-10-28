@@ -23,6 +23,7 @@ export function toTableView(g: GameView): TableView {
       dealer: s.dealer, acting: s.acting, allIn: s.allIn, won: s.won, tell: s.tell, mood: s.mood,
     })),
     fx: g.fx,
+    settings: g.settings,
     log: g.log,
     read: g.read,
     session: g.session,

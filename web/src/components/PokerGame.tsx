@@ -4,8 +4,10 @@
 // table screen. Typing goes through one invisible <input>, so phones get a keyboard and
 // desktop keys land in the same place.
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { Synth } from "@/audio/synth";
 import { Game } from "@/game/game";
 import { loadSave, writeSave } from "@/game/save";
+import { loadSettings, saveSettings } from "@/game/settings";
 import { toTableView } from "@/game/toView";
 import TableScreen from "./TableScreen";
 
@@ -13,18 +15,41 @@ export default function PokerGame({ fontFamily }: { fontFamily: string }) {
   const [game, setGame] = useState<Game | null>(null);
   const [, setTick] = useState(0);
   const input = useRef<HTMLInputElement>(null);
+  const synth = useRef<Synth | null>(null);
 
   useEffect(() => {
     // redraw at most once a frame, however many times the game changes
     let frame = 0;
     let g: Game | null = null;
+    const settings = loadSettings();
+    const sound = (synth.current = new Synth());
+    sound.setEnabled(settings.sound);
+    sound.setVolume(settings.volume);
     const schedule = () => {
-      if (!frame) frame = requestAnimationFrame(() => { frame = 0; setGame(g); setTick((t) => t + 1); });
+      if (!frame) frame = requestAnimationFrame(() => {
+        frame = 0;
+        setGame(g);
+        setTick((t) => t + 1);
+        if (g) sound.setTension(Math.min(1, g.view.tension.pot * 0.8), g.view.tension.allIn);
+      });
     };
-    g = new Game({ save: loadSave(), persist: writeSave, onChange: schedule });
-    schedule();
-    void g.start();
+    g = new Game({
+      save: loadSave(), persist: writeSave, onChange: schedule, settings,
+      onSettings: (s) => { saveSettings(s); sound.setEnabled(s.sound); sound.setVolume(s.volume); if (s.sound) sound.unlock(); },
+    });
     const game = g;
+    sound.kinds = game.view.seats.map((s) => s.kind);
+    game.director.onFx = (e) => sound.play(e);
+    const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const onMotion = () => { game.director.reducedMotion = motion.matches; };
+    onMotion();
+    motion.addEventListener("change", onMotion);
+    // browsers only allow audio after a gesture
+    const unlock = () => sound.unlock();
+    window.addEventListener("keydown", unlock);
+    window.addEventListener("pointerdown", unlock);
+    schedule();
+    void game.start();
 
     // keys pressed while something else has focus still go to the prompt
     const onKey = (e: KeyboardEvent) => {
@@ -39,8 +64,12 @@ export default function PokerGame({ fontFamily }: { fontFamily: string }) {
     window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keydown", unlock);
+      window.removeEventListener("pointerdown", unlock);
+      motion.removeEventListener("change", onMotion);
       cancelAnimationFrame(frame);
       game.stop();
+      sound.close();
     };
   }, []);
 

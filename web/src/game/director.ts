@@ -2,6 +2,7 @@
 // lines in the game's voice, the ledger, and the pacing between beats (a bot "thinking", the
 // pause after the flop, the beat before the pot is pushed). Speed 0 means instant.
 import { OpponentModel, type ModelJSON } from "@/bots/opponents";
+import type { Mood } from "@/bots/bot";
 import type { Card } from "@/engine/cards";
 import type { HandEvent } from "@/engine/events";
 import { Rng } from "@/engine/rng";
@@ -9,6 +10,7 @@ import type { HandState } from "@/engine/table";
 import { boardSize, type Variant } from "@/engine/variant";
 import { DEAL_STAGGER, FX_MS, type Fx, type FxEvent } from "./fx";
 import { LedgerBuilder, type Ledger } from "./ledger";
+import { TELLS, tellShows, type MoodChange } from "./moods";
 import { Narrator } from "./narrator";
 import { YOU, kindOf, type Presenter } from "./session";
 
@@ -30,8 +32,6 @@ export interface SeatModel {
   /** tilted, on a heater, wary, short-stacked: changes how it plays */
   mood: Mood | null;
 }
-
-export type Mood = "tilted" | "heater" | "wary" | "short";
 
 export interface ReadModel {
   vpip: number;
@@ -74,6 +74,8 @@ export interface GameView {
   tension: { pot: number; allIn: boolean; yourTurn: boolean };
   /** animation and sound cues, oldest first; consumers remember the last id they handled */
   fx: FxEvent[];
+  /** display settings */
+  settings: { crt: boolean };
 }
 
 /** Milliseconds at 1x speed. */
@@ -110,7 +112,7 @@ export class Director implements Presenter {
       log: [], ledger: this.ledger.ledger,
       prompt: { mode: "wait", info: "", options: "", input: "", feedback: null },
       read: null, session: 0, handName: null, toCall: 0, tension: { pot: 0, allIn: false, yourTurn: false },
-      fx: [],
+      fx: [], settings: { crt: false },
     };
   }
 
@@ -198,6 +200,25 @@ export class Director implements Presenter {
     this.view.prompt = { ...this.view.prompt, ...p };
     this.view.tension.yourTurn = this.view.prompt.mode === "act";
     this.changed();
+  }
+
+  /** Show tells from each creature's true hand strength (each creature has its own reliability). */
+  strengths(st: Record<string, number>) {
+    for (const s of this.view.seats) {
+      const def = TELLS[s.kind];
+      s.tell = def && s.cards && st[s.id] !== undefined && tellShows(def, st[s.id], this.flavor) ? def.tell : null;
+    }
+    this.changed();
+  }
+
+  /** Moods changed after a hand: mark the seats and say so in the log. */
+  moods(changes: MoodChange[], line: (c: MoodChange) => string | null) {
+    for (const c of changes) {
+      this.seat(c.id).mood = c.mood;
+      const l = line(c);
+      if (l) this.view.log.push(l);
+    }
+    if (changes.length) this.changed();
   }
 
   /** A creature busted and bought back in, before the next hand. */
@@ -298,7 +319,7 @@ export class Director implements Presenter {
         V.street = "PRE";
         V.board = [];
         V.pot = 0;
-        for (const s of V.seats) Object.assign(s, { bet: 0, cards: null, dealer: s.id === e.button, acting: false, allIn: false, won: 0 });
+        for (const s of V.seats) Object.assign(s, { bet: 0, cards: null, dealer: s.id === e.button, acting: false, allIn: false, won: 0, tell: null });
         break;
       case "deal":
         for (const s of V.seats) s.cards = s.id === YOU ? state.hole[YOU].slice() : new Array(e.holeCards).fill(null);
@@ -317,7 +338,7 @@ export class Director implements Presenter {
         for (const q of V.seats) { q.stack = e.stacks[q.id]; q.bet = e.bets[q.id]; }
         s.acting = false;
         s.allIn = e.allIn;
-        if (e.action === "fold") s.cards = null;
+        if (e.action === "fold") { s.cards = null; s.tell = null; }
         V.pot = e.potAfter;
         break;
       }
@@ -331,6 +352,7 @@ export class Director implements Presenter {
           s.stack = e.stacks[s.id];
           s.bet = 0;
           s.acting = false;
+          s.tell = null;
           s.won = e.pots.reduce((a, pot) => a + (pot.won[s.id] ?? 0), 0);
         }
         V.pot = 0;
