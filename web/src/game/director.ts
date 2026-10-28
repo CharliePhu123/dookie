@@ -61,6 +61,8 @@ export interface GameView {
   session: number;
   /** your best hand right now, in words */
   handName: string | null;
+  /** what you'd have to call, while it's your decision */
+  toCall: number;
   /** drives tension lighting: pot relative to the average stack, anyone all in, your turn */
   tension: { pot: number; allIn: boolean; yourTurn: boolean };
 }
@@ -90,7 +92,7 @@ export class Director implements Presenter {
       seats: ids.map((id) => ({ id, kind: kindOf(id), stack: v.startingStack, bet: 0, cards: null, dealer: false, acting: false, allIn: false, won: 0 })),
       log: [], ledger: this.ledger.ledger,
       prompt: { mode: "wait", info: "", options: "", input: "", feedback: null },
-      read: null, session: 0, handName: null, tension: { pot: 0, allIn: false, yourTurn: false },
+      read: null, session: 0, handName: null, toCall: 0, tension: { pot: 0, allIn: false, yourTurn: false },
     };
   }
 
@@ -129,7 +131,8 @@ export class Director implements Presenter {
 
   async think(id: string): Promise<void> {
     for (const s of this.view.seats) s.acting = s.id === id;
-    this.view.prompt = { ...this.view.prompt, mode: "wait" };
+    this.view.prompt = { ...this.view.prompt, mode: "wait", info: `{{K|waiting on}} ${this.narrator.who(id)}{{K|...}}` };
+    this.view.toCall = 0;
     this.changed();
     await this.sleep(BEATS.thinkMin + this.flavor.random() * (BEATS.thinkMax - BEATS.thinkMin));
   }

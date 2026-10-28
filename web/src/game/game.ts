@@ -95,6 +95,8 @@ export class Game {
 
   private ask(g: GameState): Promise<Action> {
     this.current = g;
+    for (const s of this.director.view.seats) s.acting = s.id === g.me;
+    this.director.view.toCall = g.toCall;
     this.director.setPrompt({ mode: "act", info: infoLine(g), options: optionsLine(g), feedback: null });
     return new Promise((resolve) => { this.answer = resolve; });
   }
@@ -152,6 +154,7 @@ export class Game {
     const answer = this.answer;
     this.answer = null;
     this.current = null;
+    this.director.view.toCall = 0;
     this.director.setPrompt({ mode: "wait", input: "", feedback: null, info: "", options: "" });
     answer(cmd.action);
   }

@@ -16,8 +16,9 @@ to Freehold Games, so none of them ship in this game (see [Naming](#naming-and-i
 | 1 | Port cards, variant, evaluator | **done**: vitest passes, including exact parity with Python on 5,000 hands per variant |
 | 2 | Engine: seeded RNG, equity, step-driven table state machine | **done**: 800 Python hands replay event for event; 20,000 random hands plus a fast-check property conserve chips; equity matches Python |
 | 3 | Bots in TypeScript, in a Worker | **done**: heads-up +313 ±60 bb/100 vs SimpleEquityBot and +130 ±26 vs Exploiter over 6,000 hands (Python: +249 ±63, +108 ±28); the Worker runs in Chromium |
-| 4 | Playable MVP | next |
-| 5+ | everything below | not started |
+| 4 | Playable MVP | **done**: you play hold'em against five creatures by typing play.py-style commands, in the ASCII-shader cave; saves after every hand |
+| 5 | Ship it (PR to `main`, production deploy) | next |
+| 6+ | everything below | not started |
 
 What the phase 0 mock shows (screenshot taken from `npm run build && npm start`), and what
 needs fixing as we go:
@@ -303,7 +304,7 @@ The game ships on Vercel from the start; nothing in phases 0–8 needs a server.
 | 1 | Port cards, variant, evaluator | **done** |
 | 2 | **done.** Seeded RNG; port equity; game types; step-driven table engine with side pots and the real short-all-in rule | Equities match Python fixtures within MC noise; chips sum to zero over 10k random hands (property tests with fast-check); full-hand parity with the Python engine on fixed decks and action lists |
 | 3 | **done.** Port sparring bots, opponent model, AdaptiveBot with look-ahead; the Worker; a headless `npm run sim` | TS AdaptiveBot beats TS SimpleEquityBot heads-up by a margin inside Python's CI (+249 ±63 bb/100), and decisions stay under budget |
-| 4 | **Playable MVP**: Quick Play and Duel; director, input, bet slider, log text generator, odds overlay, rebuys, persistence; render fixes from the mock review | You can play a full session in the browser, keyboard or mouse, and the Seer remembers you on reload |
+| 4 | **done.** **Playable MVP**: Quick Play; director, typed commands (no bet slider, by request), log text generator, odds overlay, rebuys, persistence; render fixes from the mock review | You can play a full session in the browser, keyboard or mouse, and the Seer remembers you on reload |
 | 5 | Ship it on Vercel (see [Deploying on Vercel](#deploying-on-vercel)): `main` branch, Git-connected project with root `web/`, preview deploys per PR, Analytics and Speed Insights; GitHub Actions for lint, vitest, Python tests and build | Production URL works on desktop and mobile; every PR gets a working preview |
 | 6 | Juice: sprites and tweens, every animation above, sound, screen shake, rare-hand fanfares, tells, moods, CRT mode, speed and reduced motion | Feels alive at 60 fps on a laptop; reduced motion leaves no animation running |
 | 7 | The Pilgrimage: map generation, regions and variants, new creatures and bosses, merchant and relics, shrines, sit & go, permadeath, tombstone and chronicle | A full run from caravanserai to Arbiter is winnable, losable, and different each seed |
@@ -383,3 +384,16 @@ Phase 4 is the first thing worth playing. Phases 6–8 can run in parallel once 
   station, AdaptiveBot finishes in the top group (+664 ±192 over 2,500 hands). Slowest decision 64 ms.
 - Bots are reproducible from a seed when given `timeLimit: Infinity` (no wall-clock cutoffs); the
   daily mode and leaderboard verification need that.
+
+## Notes from phase 4
+
+- **Input is typed, play.py style** (no bet slider): `f` `x` `c` `r 740` `h` `p` `a` `?`, then Enter.
+  A real but invisible `<input>` takes the typing, so phones get a keyboard. Errors clear the line.
+- **The view** is two layers: a fine-cell ASCII-shader world on canvas (lamp, braziers, haze,
+  watchers, tension lighting) and a DOM layer for everything you read. The Seer's read, the
+  creature list and the hand ledger live in a drawer (Tab). The full log is behind L.
+- **Code:** `web/src/game/` holds the game (session, director, narrator, ledger, commands,
+  save); `web/src/components/PokerGame.tsx` connects it to `TableScreen`.
+- **Not yet:** Duel mode and settings (speed, opponents, variant) have no UI; the defaults are
+  hold'em, five creatures, 50/100 blinds and 10,000 chips. A world glyph can show through the
+  prompt text. No card or chip movement yet (phase 6).

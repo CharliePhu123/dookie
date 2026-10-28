@@ -67,6 +67,7 @@ function Seat({ s, i, L, v }: { s: SeatView; i: number; L: Layout; v: TableView 
       </div>
       {!L.phone && !you && <div className="seat-title">{cr.title}</div>}
       <div className="seat-stack"><span className="chip">◘</span> {fmt(s.stack)}</div>
+      {!!s.won && <div className="won">+{fmt(s.won)}</div>}
       <div className="cards">
         {s.cards ? s.cards.map((c, k) => <CardFace key={k} c={c} size={size} />) : <span className="folded-note">folded</span>}
       </div>
@@ -124,7 +125,14 @@ function Prompt({ v, L }: { v: TableView; L: Layout }) {
   const p = v.prompt;
   return (
     <div className="prompt" style={{ left: L.prompt.x, top: L.prompt.y, width: L.prompt.w }}>
-      {p.active ? (
+      {p.active || p.mode === "wait" ? (
+        p.mode === "wait" ? (
+          <>
+            <div className="info wait"><Markup text={p.info || " "} /></div>
+            <div className="input typeahead"><span className="caret-mark">&gt;</span> {p.input}<span className="cursor" /></div>
+          </>
+        ) : (
+
         <>
           <div className="info">{p.info.split(/ · | {2,}/).map((o, i) => <Markup key={i} text={o} className="opt" />)}</div>
           <div className="options">
@@ -133,8 +141,12 @@ function Prompt({ v, L }: { v: TableView; L: Layout }) {
           <div className="input"><span className="caret-mark">&gt;</span> {p.input}<span className="cursor" /></div>
           <div className="feedback">{p.feedback ? <Markup text={p.feedback} /> : " "}</div>
         </>
+        )
       ) : (
-        <div className="input idle"><span className="key">[enter]</span> next hand<span className="cursor" /></div>
+        <div className="input idle">
+          {p.options ? <Markup text={p.options} /> : <><span className="key">[enter]</span> next hand</>}
+          <span className="cursor" />
+        </div>
       )}
     </div>
   );

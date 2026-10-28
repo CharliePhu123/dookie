@@ -13,6 +13,8 @@ export interface SeatView {
   dealer: boolean;
   acting: boolean;
   allIn: boolean;
+  /** chips won this hand, shown when the pot is pushed */
+  won?: number;
 }
 
 export interface ReadView {
@@ -30,6 +32,8 @@ export interface PromptView {
   input: string;           // what you've typed so far
   feedback: string | null; // error or odds output under the prompt
   active: boolean;         // your turn; false shows "[enter] next hand"
+  /** "wait" while someone else acts: shows `info` ("waiting on the Seer...") and what you've typed ahead */
+  mode?: "act" | "next" | "wait";
 }
 
 /** play.py's action grid: rows = players, columns = streets, cells = action codes. */
