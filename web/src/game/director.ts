@@ -7,6 +7,7 @@ import type { HandEvent } from "@/engine/events";
 import { Rng } from "@/engine/rng";
 import type { HandState } from "@/engine/table";
 import { boardSize, type Variant } from "@/engine/variant";
+import { DEAL_STAGGER, FX_MS, type Fx, type FxEvent } from "./fx";
 import { LedgerBuilder, type Ledger } from "./ledger";
 import { Narrator } from "./narrator";
 import { YOU, kindOf, type Presenter } from "./session";
@@ -24,7 +25,13 @@ export interface SeatModel {
   allIn: boolean;
   /** chips won this hand, shown at the end */
   won: number;
+  /** a small idle animation that leaks hand strength (the gnashback drools), or null */
+  tell: string | null;
+  /** tilted, on a heater, wary, short-stacked: changes how it plays */
+  mood: Mood | null;
 }
+
+export type Mood = "tilted" | "heater" | "wary" | "short";
 
 export interface ReadModel {
   vpip: number;
@@ -65,6 +72,8 @@ export interface GameView {
   toCall: number;
   /** drives tension lighting: pot relative to the average stack, anyone all in, your turn */
   tension: { pot: number; allIn: boolean; yourTurn: boolean };
+  /** animation and sound cues, oldest first; consumers remember the last id they handled */
+  fx: FxEvent[];
 }
 
 /** Milliseconds at 1x speed. */
@@ -74,6 +83,9 @@ const BEATS = {
 };
 
 const LOG_KEEP = 200;
+const FX_KEEP = 64;
+const BOARD_STAGGER = 140;
+const WIN_STAGGER = 350;
 
 export class Director implements Presenter {
   view: GameView;
@@ -83,21 +95,44 @@ export class Director implements Presenter {
   private ledger = new LedgerBuilder();
   private flavor: Rng;
   private wake: (() => void) | null = null;
+  private fxId = 0;
+  /** no animations, only end states (prefers-reduced-motion) */
+  reducedMotion = false;
+  /** every cue as it's issued (the synth listens here) */
+  onFx: (e: FxEvent) => void = () => {};
 
   constructor(private v: Variant, private ids: string[], seed: string, private onChange: () => void = () => {}) {
     this.flavor = new Rng(`${seed}/flavor`);
     this.narrator = new Narrator(v, Object.fromEntries(ids.map((p) => [p, kindOf(p)])), YOU, this.flavor);
     this.view = {
       handNo: 0, blinds: [v.smallBlind, v.bigBlind], street: "", board: [], boardSize: boardSize(v), pot: 0,
-      seats: ids.map((id) => ({ id, kind: kindOf(id), stack: v.startingStack, bet: 0, cards: null, dealer: false, acting: false, allIn: false, won: 0 })),
+      seats: ids.map((id) => ({ id, kind: kindOf(id), stack: v.startingStack, bet: 0, cards: null, dealer: false, acting: false, allIn: false, won: 0, tell: null, mood: null })),
       log: [], ledger: this.ledger.ledger,
       prompt: { mode: "wait", info: "", options: "", input: "", feedback: null },
       read: null, session: 0, handName: null, toCall: 0, tension: { pot: 0, allIn: false, yourTurn: false },
+      fx: [],
     };
   }
 
   private seat(id: string) {
     return this.view.seats.find((s) => s.id === id)!;
+  }
+
+  private seatIndex(id: string) {
+    return this.view.seats.findIndex((s) => s.id === id);
+  }
+
+  /** Issue a cue; returns when it will have finished, in ms from now at the current speed. */
+  cue(fx: Fx, delay = 0): number {
+    const animate = this.speed > 0 && !this.reducedMotion;
+    const e: FxEvent = {
+      id: ++this.fxId, at: typeof performance !== "undefined" ? performance.now() : 0, fx,
+      ms: animate ? FX_MS[fx.kind] / this.speed : 0, delay: animate ? delay / this.speed : 0,
+    };
+    this.view.fx.push(e);
+    if (this.view.fx.length > FX_KEEP) this.view.fx.splice(0, this.view.fx.length - FX_KEEP);
+    this.onFx(e);
+    return e.delay + e.ms;
   }
 
   private changed() {
@@ -133,6 +168,7 @@ export class Director implements Presenter {
     for (const s of this.view.seats) s.acting = s.id === id;
     this.view.prompt = { ...this.view.prompt, mode: "wait", info: `{{K|waiting on}} ${this.narrator.who(id)}{{K|...}}` };
     this.view.toCall = 0;
+    this.cue({ kind: "think", seat: this.seatIndex(id) });
     this.changed();
     await this.sleep(BEATS.thinkMin + this.flavor.random() * (BEATS.thinkMax - BEATS.thinkMin));
   }
@@ -164,19 +200,95 @@ export class Director implements Presenter {
     this.changed();
   }
 
+  /** A creature busted and bought back in, before the next hand. */
+  bust(id: string) {
+    this.cue({ kind: "bust", seat: this.seatIndex(id) });
+    this.changed();
+  }
+
   async present(events: HandEvent[], state: HandState): Promise<void> {
     for (const e of events) {
+      const before = this.view.seats.map((s) => s.bet);
       this.apply(e, state);
       this.ledger.observe(e);
       this.view.ledger = this.ledger.ledger;
       const lines = this.narrator.lines([e]);
       if (lines.length) this.view.log.push(...lines);
       this.updateDerived(state);
+      const fxDone = this.cues(e, state, before);
       this.changed();
       const beat = e.type === "action" ? (e.player === YOU ? BEATS.yourAction : BEATS.botAction) : BEATS[e.type];
-      await this.sleep(beat);
+      await this.sleep(Math.max(beat, fxDone * this.speed));   // sleep() takes 1x ms
     }
   }
+
+  /** Animation cues for one event; returns ms until the last one finishes (at the current speed). */
+  private cues(e: HandEvent, state: HandState, betsBefore: number[]): number {
+    const V = this.view;
+    let done = 0;
+    const at = (ms: number) => { done = Math.max(done, ms); };
+    switch (e.type) {
+      case "deal": {
+        // one card at a time around the table, starting left of the button
+        const order = [...state.seats.slice(1), state.seats[0]].map((id) => this.seatIndex(id));
+        let i = 0;
+        for (let k = 0; k < e.holeCards; k++) for (const seat of order) at(this.cue({ kind: "deal", seat, k, n: e.holeCards }, DEAL_STAGGER * i++));
+        break;
+      }
+      case "blinds":
+        V.seats.forEach((s, seat) => { if (s.bet) at(this.cue({ kind: "bet", seat, amount: s.bet, allIn: s.allIn })); });
+        break;
+      case "street": {
+        if (betsBefore.some((b) => b > 0)) at(this.cue({ kind: "collect" }));
+        const fresh = e.board.length - this.boardShown;
+        for (let j = 0; j < fresh; j++) {
+          const index = this.boardShown + j;
+          at(this.cue({ kind: "board", index, card: e.board[index] }, FX_MS.collect * +betsBefore.some((b) => b > 0) + BOARD_STAGGER * j));
+        }
+        this.boardShown = e.board.length;
+        break;
+      }
+      case "action": {
+        const seat = this.seatIndex(e.player);
+        if (e.action === "fold") at(this.cue({ kind: "fold", seat }));
+        else if (e.action === "check") at(this.cue({ kind: "check", seat }));
+        else at(this.cue({ kind: "bet", seat, amount: V.seats[seat].bet - betsBefore[seat], allIn: e.allIn }));
+        if (e.allIn) at(this.cue({ kind: "allIn", seat }));
+        break;
+      }
+      case "showdown": {
+        if (betsBefore.some((b) => b > 0)) at(this.cue({ kind: "collect" }));
+        const fresh = e.board.length - this.boardShown;   // all-in run-outs deal the rest here
+        for (let j = 0; j < fresh; j++) {
+          const index = this.boardShown + j;
+          at(this.cue({ kind: "board", index, card: e.board[index] }, BOARD_STAGGER * j));
+        }
+        this.boardShown = e.board.length;
+        for (const p of Object.keys(e.hands)) if (p !== YOU) at(this.cue({ kind: "reveal", seat: this.seatIndex(p) }));
+        this.shown = e.hands;
+        break;
+      }
+      case "hand_end": {
+        if (betsBefore.some((b) => b > 0)) at(this.cue({ kind: "collect" }));
+        let k = 0;
+        V.seats.forEach((s, seat) => {
+          if (!s.won) return;
+          const hole = this.shown[s.id];
+          const category = hole ? this.narrator.category(hole, V.board) : null;
+          at(this.cue({ kind: "win", seat, amount: s.won, hand: hole ? this.narrator.handName(hole, V.board) : null, category }, WIN_STAGGER * k++));
+        });
+        break;
+      }
+      case "hand_start":
+        this.boardShown = 0;
+        this.shown = {};
+        break;
+    }
+    return done;
+  }
+
+  private boardShown = 0;
+  private shown: Record<string, Card[]> = {};
 
   private apply(e: HandEvent, state: HandState) {
     const V = this.view;

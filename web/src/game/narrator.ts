@@ -214,6 +214,11 @@ export class Narrator {
     return out;
   }
 
+  /** Evaluator category (0 high card ... 8 straight flush) of the best hand these cards make. */
+  category(hole: readonly Card[], board: readonly Card[] = this.board): number {
+    return this.ev.category(this.ev.rank(hole, board));
+  }
+
   /** "a flush", "two pair": the best hand these cards make on the current board. */
   handName(hole: readonly Card[], board: readonly Card[] = this.board): string {
     return HAND_WORDS[this.ev.category(this.ev.rank(hole, board))];

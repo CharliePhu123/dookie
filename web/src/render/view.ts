@@ -1,6 +1,7 @@
 // What the table screen shows: everything the engine (phase 4) hands the renderer.
 import type { Card } from "@/engine/cards";
 import type { Creature } from "@/game/creatures";
+import type { FxEvent } from "@/game/fx";
 import { Q, type ColorCode } from "./palette";
 import type { Mood } from "./world";
 
@@ -15,6 +16,10 @@ export interface SeatView {
   allIn: boolean;
   /** chips won this hand, shown when the pot is pushed */
   won?: number;
+  /** a tell: a tiny idle animation that leaks hand strength, e.g. "drool" for the gnashback */
+  tell?: string | null;
+  /** "tilted" | "heater" | "wary" | "short": a status mark over the creature */
+  mood?: string | null;
 }
 
 export interface ReadView {
@@ -60,6 +65,10 @@ export interface TableView {
   ledger: LedgerView;
   /** override the mood the world derives from the view */
   mood?: Partial<Mood>;
+  /** animation and sound cues, oldest first (see game/fx.ts); animate the ones you haven't seen */
+  fx?: FxEvent[];
+  /** display settings from typed commands */
+  settings?: { crt: boolean };
 }
 
 export const LEDGER_LEGEND = "b blind  X check  C call  B bet  R raise  A all-in  F fold  W win";

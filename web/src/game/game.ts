@@ -79,7 +79,10 @@ export class Game {
   async playOne(): Promise<void> {
     const s = this.session, d = this.director;
     d.setPrompt({ mode: "wait", info: "", options: "", feedback: null });
-    await s.playHand(d, (g) => this.ask(g), (id) => d.note(d.narrator.rebuy(id, s.config.stack, s.buyins[id])));
+    await s.playHand(d, (g) => this.ask(g), (id) => {
+      d.bust(id);
+      d.note(d.narrator.rebuy(id, s.config.stack, s.buyins[id]));
+    });
     d.setStacks(s.bank);
     d.setSession(s.net());
     const saved = await s.save();
