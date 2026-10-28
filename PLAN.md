@@ -15,8 +15,9 @@ to Freehold Games, so none of them ship in this game (see [Naming](#naming-and-i
 | 0 | Scaffold Next.js app, palette, canvas glyph grid, static table mock | **done**: `npm run dev` shows the mock table |
 | 1 | Port cards, variant, evaluator | **done**: vitest passes, including exact parity with Python on 5,000 hands per variant |
 | 2 | Engine: seeded RNG, equity, step-driven table state machine | **done**: 800 Python hands replay event for event; 20,000 random hands plus a fast-check property conserve chips; equity matches Python |
-| 3 | Bots in TypeScript, in a Worker | next |
-| 4+ | everything below | not started |
+| 3 | Bots in TypeScript, in a Worker | **done**: heads-up +313 ±60 bb/100 vs SimpleEquityBot and +130 ±26 vs Exploiter over 6,000 hands (Python: +249 ±63, +108 ±28); the Worker runs in Chromium |
+| 4 | Playable MVP | next |
+| 5+ | everything below | not started |
 
 What the phase 0 mock shows (screenshot taken from `npm run build && npm start`), and what
 needs fixing as we go:
@@ -301,7 +302,7 @@ The game ships on Vercel from the start; nothing in phases 0–8 needs a server.
 | 0 | Scaffold, palette, glyph grid, static table mock | **done** |
 | 1 | Port cards, variant, evaluator | **done** |
 | 2 | **done.** Seeded RNG; port equity; game types; step-driven table engine with side pots and the real short-all-in rule | Equities match Python fixtures within MC noise; chips sum to zero over 10k random hands (property tests with fast-check); full-hand parity with the Python engine on fixed decks and action lists |
-| 3 | Port sparring bots, opponent model, AdaptiveBot with look-ahead; the Worker; a headless `npm run sim` | TS AdaptiveBot beats TS SimpleEquityBot heads-up by a margin inside Python's CI (+249 ±63 bb/100), and decisions stay under budget |
+| 3 | **done.** Port sparring bots, opponent model, AdaptiveBot with look-ahead; the Worker; a headless `npm run sim` | TS AdaptiveBot beats TS SimpleEquityBot heads-up by a margin inside Python's CI (+249 ±63 bb/100), and decisions stay under budget |
 | 4 | **Playable MVP**: Quick Play and Duel; director, input, bet slider, log text generator, odds overlay, rebuys, persistence; render fixes from the mock review | You can play a full session in the browser, keyboard or mouse, and the Seer remembers you on reload |
 | 5 | Ship it on Vercel (see [Deploying on Vercel](#deploying-on-vercel)): `main` branch, Git-connected project with root `web/`, preview deploys per PR, Analytics and Speed Insights; GitHub Actions for lint, vitest, Python tests and build | Production URL works on desktop and mobile; every PR gets a working preview |
 | 6 | Juice: sprites and tweens, every animation above, sound, screen shake, rare-hand fanfares, tells, moods, CRT mode, speed and reduced motion | Feels alive at 60 fps on a laptop; reduced motion leaves no animation running |
@@ -362,10 +363,23 @@ Phase 4 is the first thing worth playing. Phases 6–8 can run in parallel once 
   Chip results are unchanged; the TS engine behaves the same way.
 - **Rules:** `web/src/engine/table.ts` takes `STANDARD_RULES` (real short-all-in and odd-chip rules,
   the default) or `PYTHON_RULES` (matches `pokerbot/engine.py`, used by the parity test).
-- **Bot weakness found while testing:** postflop "strict" range cutoffs are re-sampled from only
-  150 hands on every equity call, so a single river equity can swing from 0.05 to 0.17 between
-  calls on the same spot (sd about 0.03). The parity test averages 20 calls to compare
-  expectations. Worth fixing in both Python and TS before tuning: cache the cutoff per board and
-  strictness, or sample more hands.
+- **Equity noise:** postflop "strict" range cutoffs are re-sampled from only 150 hands on every
+  equity call, so a single river equity can swing from 0.05 to 0.17 between calls on the same
+  spot (sd about 0.03). The parity test averages 20 calls to compare expectations. In phase 3,
+  caching the cutoff per board and sampling 400 hands made no measurable difference over
+  20,000 heads-up hands (+119 ±13 vs +125 ±14 bb/100 against Exploiter, +302 ±34 vs +320 ±35
+  against SimpleEquityBot), so the bot keeps Python's behaviour.
 - **Regenerating fixtures:** `python3 scripts/make_fixtures.py` writes all three fixture files;
   the evaluator fixture is byte-for-byte unchanged by the new sections.
+
+## Notes from phase 3
+
+- Bots live in `web/src/bots/` and run through `web/src/worker/` (`BotClient.create()` uses a Web
+  Worker in the browser, in-process elsewhere). `/lab` is a page where the bots play each other
+  through the Worker; it's how we check the Worker bundles and keeps up in a real browser.
+- `npm run sim` is the TS twin of `run_match.py`, about 6× faster.
+- Acceptance runs (seed 1, standard rules): heads-up vs SimpleEquityBot +313 ±60 bb/100, vs
+  Exploiter +130 ±26 (6,000 hands each); 7-handed against 2× simple, Exploiter, nit, maniac and
+  station, AdaptiveBot finishes in the top group (+664 ±192 over 2,500 hands). Slowest decision 64 ms.
+- Bots are reproducible from a seed when given `timeLimit: Infinity` (no wall-clock cutoffs); the
+  daily mode and leaderboard verification need that.
