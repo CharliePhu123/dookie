@@ -24,12 +24,12 @@ export interface Layout {
   rimWidth: number;
   seats: SeatSlot[];
   board: Pt;          // centre of the board cards
+  croupier: Pt;       // the many-handed croupier, where cards are dealt from
   pot: Pt;
   card: { w: number; h: number };      // opponents' and board cards
   bigCard: { w: number; h: number };   // your cards
-  /** bottom-centre prompt block, and whether the ledger floats top-right */
+  /** bottom-centre prompt block */
   prompt: Box;
-  ledgerFloats: boolean;
   /** world grid: cell size in CSS px and grid size */
   cell: { w: number; h: number };
   cols: number;
@@ -44,8 +44,8 @@ export function worldFontSize(W: number): number {
 }
 
 export const SEAT = {
-  desk: { w: 184, h: 104, youW: 240, youH: 118, gap: 30 },
-  phone: { w: 104, h: 74, youW: 200, youH: 100, gap: 14 },
+  desk: { w: 184, h: 122, youW: 240, youH: 136, gap: 30 },
+  phone: { w: 104, h: 88, youW: 150, youH: 114, gap: 14 },
 };
 
 export function makeLayout(W: number, H: number, nSeats: number, dpr = 1): Layout {
@@ -79,13 +79,13 @@ export function makeLayout(W: number, H: number, nSeats: number, dpr = 1): Layou
   const minA = (5 * card.w + 24) / 2 + rimWidth + 10;   // the board must still fit on the felt
   let table = { cx, cy, a, b };
   let seats: SeatSlot[] = [];
-  for (let attempt = 0; attempt < 14; attempt++) {
+  for (let attempt = 0; attempt < 24; attempt++) {
     table = { cx, cy, a, b };
     const placed = placeSeats(table, nSeats, S, W, hudTop, prompt.y);
     seats = placed.seats;
     if (placed.ok) break;
     a = Math.max(minA, a * 0.95);
-    b *= 0.96;
+    b = Math.max(phone ? minA * 1.25 : minA * 0.45, b * 0.96);
   }
 
   // board and pot in the middle; chips between each seat and the board, clear of both
@@ -106,16 +106,21 @@ export function makeLayout(W: number, H: number, nSeats: number, dpr = 1): Layou
     s.bet = { x, y };
   }
 
-  // the ledger floats top-right when the seats leave it room
-  const ledgerH = (nSeats + 3) * 16 + 16;
-  const ledgerBox = { x: W - 360, y: 40, w: 344, h: ledgerH };
-  const ledgerFloats = !phone && W >= 1100 && seats.every((s) => !overlaps(s.box, ledgerBox, 12));
+  // the croupier stands at the end of the table, in the gap between seats nearest the right
+  const gap = Math.PI / Math.max(1, nSeats);
+  let ga = 0, best = 9;
+  for (let i = 0; i < nSeats; i++) {
+    const g = Math.PI / 2 + (2 * Math.PI * i) / nSeats + gap;
+    const d = Math.abs(Math.atan2(Math.sin(g), Math.cos(g)));
+    if (d < best) { best = d; ga = g; }
+  }
+  const croupier = { x: cx + Math.cos(ga) * (table.a + (phone ? 12 : 20)), y: cy + Math.sin(ga) * (table.b + (phone ? 12 : 16)) };
 
   const fs = worldFontSize(W);
   const cw = Math.max(1, Math.round(fs * 0.6 * dpr)) / dpr;
   const ch = Math.max(1, Math.round(fs * 1.1 * dpr)) / dpr;
   return {
-    W, H, phone, table, rimWidth, seats, board, pot, card, bigCard, prompt, ledgerFloats,
+    W, H, phone, table, rimWidth, seats, board, croupier, pot, card, bigCard, prompt,
     cell: { w: cw, h: ch }, cols: Math.ceil(W / cw), rows: Math.ceil(H / ch),
   };
 }
