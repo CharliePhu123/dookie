@@ -1,14 +1,16 @@
 "use client";
 
 // Phase 0: a static hand to show the look. Replaced by the live engine in phase 4.
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
 import { cards } from "@/engine/cards";
 import { CREATURES } from "@/game/creatures";
-import { COLS, ROWS, drawScene, type TableView } from "@/render/scene";
+import { makeLayout } from "@/render/layout";
+import { createScene, drawScene, type Scene, type TableView } from "@/render/scene";
 import type { Grid } from "@/render/grid";
 import GlyphCanvas from "./GlyphCanvas";
 
 const VIEW: TableView = {
+  place: "the Salt-Flat Caravanserai",
   handNo: 34,
   blinds: [50, 100],
   street: "TURN",
@@ -24,19 +26,27 @@ const VIEW: TableView = {
     { creature: CREATURES.station, stack: 9100, bet: 450, cards: [null, null], dealer: false, acting: false, allIn: false },
   ],
   log: [
-    "{{K|Hand 34 begins. The snapjaw takes the dealer's stone.}}",
+    "{{K|The salt wind moans down the passage. Someone feeds the braziers.}}",
+    "{{K|Hand 34 begins. The gnashback takes the dealer's stone.}}",
     "{{C|The Reckoner}} folds.",
     "{{w|The hoarding tortoise}} folds, clutching its chips.",
-    "{{R|The frothing snapjaw}} shoves {{W|9,550}} chips across the felt, frothing.",
+    "{{R|The frothing gnashback}} shoves {{W|9,550}} chips across the felt, frothing.",
     "{{y|The chrome idol}} calls. It always calls.",
     "{{M|The Bayesian Seer}} considers you. Its eyes are many.",
   ],
   read: { vpip: 0.3, pfr: 0.05, foldToBet: 0.23, stab: 0.27, bluff: 0.3 },
   session: -4472,
+  handName: "a pair of queens",
   prompt: "{{K|waiting on}} {{M|the Seer}}{{K|...}}   {{W|f}} fold  {{W|c}} call  {{W|r}} raise  {{W|a}} all-in  {{W|?}} odds",
 };
 
 export default function MockTable({ fontFamily }: { fontFamily: string }) {
-  const draw = useCallback((g: Grid, t: number) => drawScene(g, VIEW, t), []);
-  return <GlyphCanvas cols={COLS} rows={ROWS} fontFamily={fontFamily} draw={draw} />;
+  const scene = useRef<Scene | null>(null);
+  const draw = useCallback((g: Grid, t: number) => {
+    const s = scene.current;
+    if (!s || s.layout.cols !== g.cols || s.layout.rows !== g.rows)
+      scene.current = createScene(makeLayout(g.cols, g.rows, VIEW.seats.length));
+    drawScene(g, VIEW, t, scene.current!);
+  }, []);
+  return <GlyphCanvas fontFamily={fontFamily} draw={draw} />;
 }
