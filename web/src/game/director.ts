@@ -95,7 +95,7 @@ export class Director implements Presenter {
   view: GameView;
   /** 1 = normal, 2 or 4 = faster, 0 = instant */
   speed = 1;
-  readonly narrator: Narrator;
+  narrator: Narrator;
   private ledger = new LedgerBuilder();
   private flavor: Rng;
   private wake: (() => void) | null = null;
@@ -105,17 +105,25 @@ export class Director implements Presenter {
   /** every cue as it's issued (the synth listens here) */
   onFx: (e: FxEvent) => void = () => {};
 
-  constructor(private v: Variant, private ids: string[], seed: string, private onChange: () => void = () => {}) {
+  constructor(private v: Variant, ids: string[], seed: string, private onChange: () => void = () => {}) {
     this.flavor = new Rng(`${seed}/flavor`);
-    this.narrator = new Narrator(v, Object.fromEntries(ids.map((p) => [p, kindOf(p)])), YOU, this.flavor);
+    this.narrator = this.narratorFor(ids);
     this.view = {
       handNo: 0, blinds: [v.smallBlind, v.bigBlind], street: "", board: [], boardSize: boardSize(v), pot: 0,
-      seats: ids.map((id) => ({ id, kind: kindOf(id), stack: v.startingStack, bet: 0, cards: null, dealer: false, acting: false, allIn: false, won: 0, tell: null, mood: null, out: null })),
+      seats: this.seatsFor(ids),
       log: [], ledger: this.ledger.ledger,
       prompt: { mode: "wait", info: "", options: "", input: "", feedback: null },
       read: null, session: 0, handName: null, toCall: 0, tension: { pot: 0, allIn: false, yourTurn: false },
       fx: [], settings: { crt: false },
     };
+  }
+
+  private narratorFor(ids: string[]) {
+    return new Narrator(this.v, Object.fromEntries(ids.map((p) => [p, kindOf(p)])), YOU, this.flavor);
+  }
+
+  private seatsFor(ids: string[]): SeatModel[] {
+    return ids.map((id) => ({ id, kind: kindOf(id), stack: this.v.startingStack, bet: 0, cards: null, dealer: false, acting: false, allIn: false, won: 0, tell: null, mood: null, out: null }));
   }
 
   private seat(id: string) {
@@ -237,9 +245,14 @@ export class Director implements Presenter {
   }
 
   /** A new tournament with the same creatures: everyone back in with a fresh stack. */
-  reset(bank: Record<string, number>) {
+  /** A new tournament; `ids` when a different set of creatures sits down. */
+  reset(bank: Record<string, number>, ids?: string[]) {
     const V = this.view;
     Object.assign(V, { handNo: 0, street: "", board: [], pot: 0, handName: null, toCall: 0 });
+    if (ids) {
+      this.narrator = this.narratorFor(ids);
+      V.seats = this.seatsFor(ids);
+    }
     for (const s of V.seats) {
       Object.assign(s, { stack: bank[s.id], bet: 0, cards: null, dealer: false, acting: false, allIn: false, won: 0, tell: null, mood: null, out: null });
     }

@@ -9,7 +9,7 @@ import { fmt, infoLine, optionsLine, oddsText, parseCommand } from "./commands";
 import { Director, type GameView } from "./director";
 import { MoodTracker, moodLine } from "./moods";
 import { ordinal } from "@/render/view";
-import { DEFAULT_CONFIG, Session, YOU, type SessionConfig, type SessionSave } from "./session";
+import { DEFAULT_CONFIG, Session, YOU, opponentsFor, type SessionConfig, type SessionSave } from "./session";
 import { DEFAULT_SETTINGS, HELP, parseSetting, type Settings } from "./settings";
 
 export interface GameSave {
@@ -48,13 +48,17 @@ export class Game {
   private running = false;
   private moods: MoodTracker;
   settings: Settings;
+  /** a table size asked for with `bots`, waiting for the next tournament */
+  private nextBots: number | null = null;
 
   constructor(private o: GameOptions = {}) {
-    const config = o.save?.session.config ?? { ...DEFAULT_CONFIG, ...o.config };
+    this.settings = { ...DEFAULT_SETTINGS, ...o.settings };
+    const config = o.save?.session.config ?? { ...DEFAULT_CONFIG, opponents: opponentsFor(this.settings.bots), ...o.config };
     this.bots = o.bots ?? BotClient.create();
     this.session = new Session(config, this.bots, o.save?.session);
     this.director = new Director(this.session.v, this.session.ids, this.session.config.seed, o.onChange);
-    this.settings = { ...DEFAULT_SETTINGS, ...o.settings };
+    // `bots` changed while this saved tournament was running: the next one is that size
+    if (o.save && config.opponents.length !== this.settings.bots) this.nextBots = this.settings.bots;
     this.director.speed = o.speed ?? this.settings.speed;
     this.director.view.settings = { crt: this.settings.crt };
     this.director.setStacks(this.session.bank);
@@ -100,14 +104,19 @@ export class Game {
     }
   }
 
-  /** Everyone back in with a fresh stack. The Seer keeps what it learned about you. */
+  /** Everyone back in with a fresh stack (and a new table size, if `bots` asked for one). The Seer keeps what it learned about you. */
   async newTournament(): Promise<void> {
     const { models } = await this.session.save();
-    this.session = new Session({ ...this.session.config, seed: "" }, this.bots, { models });
+    const n = this.nextBots;
+    this.nextBots = null;
+    const opponents = n === null ? this.session.config.opponents : opponentsFor(n);
+    this.session = new Session({ ...this.session.config, opponents, seed: "" }, this.bots, { models });
     this.moods = new MoodTracker(this.session.ids, this.ev);
-    this.director.reset(this.session.bank);
+    this.director.reset(this.session.bank, n === null ? undefined : this.session.ids);
     this.director.setSession(this.session.net());
-    this.director.log("{{K|· · ·}}", "The croupier gathers the chips and deals everyone back in.", this.welcome());
+    this.director.log("{{K|· · ·}}", n === null
+      ? "The croupier gathers the chips and deals everyone back in."
+      : `The croupier gathers the chips. ${n} creatures take their seats.`, this.welcome());
     await this.persist();
   }
 
@@ -152,6 +161,7 @@ export class Game {
       this.director.cue({ kind: "error" });
       this.director.setPrompt({ input: "", feedback: `{{R|${r.error}}}` });
     } else {
+      if (r.settings.bots !== this.settings.bots) this.nextBots = r.settings.bots === this.session.config.opponents.length ? null : r.settings.bots;
       this.settings = r.settings;
       this.director.speed = r.settings.speed;
       this.director.view.settings = { crt: r.settings.crt };
@@ -196,7 +206,7 @@ export class Game {
     if (k === "Enter") return this.submit();
     if (k === "Backspace") return this.setInput(p.input.slice(0, -1));
     if (k === "Escape") return this.setInput("");
-    if (k === " " && p.mode !== "act") return this.submit();
+    if (k === " " && p.mode !== "act" && !p.input) return this.submit();   // typing "speed 4" between hands
     if (k.length === 1) return this.setInput(p.input + k);
   }
 

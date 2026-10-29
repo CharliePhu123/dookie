@@ -38,8 +38,11 @@ export default function PokerGame({ fontFamily }: { fontFamily: string }) {
       onSettings: (s) => { saveSettings(s); sound.setEnabled(s.sound); sound.setVolume(s.volume); if (s.sound) sound.unlock(); },
     });
     const game = g;
-    sound.kinds = game.view.seats.map((s) => s.kind);
-    game.director.onFx = (e) => sound.play(e);
+    // the table can change size between tournaments, so read the seats as each cue plays
+    game.director.onFx = (e) => {
+      sound.kinds = game.view.seats.map((s) => s.kind);
+      sound.play(e);
+    };
     const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
     const onMotion = () => { game.director.reducedMotion = motion.matches; };
     onMotion();
@@ -86,7 +89,7 @@ export default function PokerGame({ fontFamily }: { fontFamily: string }) {
 
   const onKeyDown = (e: ReactKeyboardEvent<HTMLInputElement>) => {
     const empty = !game.view.prompt.input;
-    if (e.key === "Enter" || e.key === "Escape" || (e.key === " " && game.view.prompt.mode !== "act")) {
+    if (e.key === "Enter" || e.key === "Escape" || (e.key === " " && game.view.prompt.mode !== "act" && empty)) {
       e.preventDefault();
       game.key(e.key);
       sync(game);
