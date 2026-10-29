@@ -64,7 +64,7 @@ many eyes, remembers how you play between visits.
 
 | Mode | What it is | Phase |
 |---|---|---|
-| **Quick Play** | One cash table. Choose variant, table size (2–8), blinds, stack and opponents. Rebuys allowed. | 4 |
+| **Quick Play** | One table, played as a tournament: no rebuys, bust and you're out, last one with chips wins. Choose variant, table size (2–8), blinds, stack and opponents. | 4 |
 | **Duel with the Seer** | Heads-up against AdaptiveBot. Its model of you persists between visits and its read is shown live. | 4 |
 | **Sit & Go** | Single-table tournament with rising blinds; last creature standing. | 7 |
 | **The Pilgrimage** | Roguelite run across a glyph map: regions, creatures, relics, bosses, permadeath. | 7 |
@@ -396,7 +396,7 @@ Phase 4 is the first thing worth playing. Phases 6–8 can run in parallel once 
 - **Code:** `web/src/game/` holds the game (session, director, narrator, ledger, commands,
   save); `web/src/components/PokerGame.tsx` connects it to `TableScreen`.
 - **Not yet:** Duel mode and settings (speed, opponents, variant) have no UI; the defaults are
-  hold'em, five creatures, 50/100 blinds and 10,000 chips. A world glyph can show through the
+  hold'em, five creatures, 5/10 blinds and 1,000 chips. A world glyph can show through the
   prompt text. No card or chip movement yet (phase 6).
 
 ## Notes from phase 6

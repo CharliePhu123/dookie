@@ -5,14 +5,16 @@ import { EquityEngine } from "@/engine/equity";
 import { Evaluator } from "@/engine/evaluator";
 import type { Action, GameState } from "@/engine/game";
 import { BotClient } from "@/worker/client";
-import { infoLine, optionsLine, oddsText, parseCommand } from "./commands";
+import { fmt, infoLine, optionsLine, oddsText, parseCommand } from "./commands";
 import { Director, type GameView } from "./director";
 import { MoodTracker, moodLine } from "./moods";
-import { DEFAULT_CONFIG, Session, type SessionConfig, type SessionSave } from "./session";
+import { ordinal } from "@/render/view";
+import { DEFAULT_CONFIG, Session, YOU, type SessionConfig, type SessionSave } from "./session";
 import { DEFAULT_SETTINGS, HELP, parseSetting, type Settings } from "./settings";
 
 export interface GameSave {
-  version: 1;
+  /** 2: tournaments, no rebuys */
+  version: 2;
   session: SessionSave;
   /** the last few log lines, so a reload picks up where you were */
   log: string[];
@@ -35,7 +37,7 @@ export interface GameOptions {
 const MAX_INPUT = 24;
 
 export class Game {
-  readonly session: Session;
+  session: Session;
   readonly director: Director;
   private bots: BotClient;
   private eq: EquityEngine | null = null;
@@ -56,6 +58,7 @@ export class Game {
     this.director.speed = o.speed ?? this.settings.speed;
     this.director.view.settings = { crt: this.settings.crt };
     this.director.setStacks(this.session.bank);
+    this.director.setOut(this.session.out);
     this.director.setSession(this.session.net());
     if (o.save) {
       this.director.view.log.push(...o.save.log, "{{K|· · ·}}", "You return to the table. The creatures remember you.");
@@ -64,7 +67,8 @@ export class Game {
       const n = this.session.ids.length - 1;
       this.director.log(
         `You sit down at the stone table. ${n === 1 ? "A creature looks" : `${["", "One", "Two", "Three", "Four", "Five", "Six", "Seven"][n]} creatures look`} up.`,
-        "{{K|Type a letter, then Enter:}} {{W|c}} call {{K|·}} {{W|f}} fold {{K|·}} {{W|r 300}} raise to 300 {{K|·}} {{W|?}} odds",
+        this.welcome(),
+        "{{K|Type a letter, then Enter:}} {{W|c}} call {{K|·}} {{W|f}} fold {{K|·}} {{W|r 30}} raise to 30 {{K|·}} {{W|?}} odds",
       );
     }
     this.ev = new Evaluator(this.session.v);
@@ -75,33 +79,61 @@ export class Game {
     return this.director.view;
   }
 
-  /** Play hands until stop(). */
+  private welcome(): string {
+    const c = this.session.config;
+    return `{{K|A tournament: everyone starts with}} {{W|${fmt(c.stack)}}}{{K|, blinds}} {{W|${fmt(c.smallBlind)}/${fmt(c.bigBlind)}}}{{K|. No rebuys: lose your chips and you're out.}}`;
+  }
+
+  /** Play hands until stop(); when a tournament ends, Enter starts the next. */
   async start(): Promise<void> {
     if (this.running) return;
     this.running = true;
     while (this.running) {
+      if (this.session.over) {
+        await this.waitForNext();
+        if (!this.running) break;
+        await this.newTournament();
+      }
       await this.playOne();
       if (!this.running) break;
-      await this.waitForNext();
+      if (!this.session.over) await this.waitForNext();
     }
+  }
+
+  /** Everyone back in with a fresh stack. The Seer keeps what it learned about you. */
+  async newTournament(): Promise<void> {
+    const { models } = await this.session.save();
+    this.session = new Session({ ...this.session.config, seed: "" }, this.bots, { models });
+    this.moods = new MoodTracker(this.session.ids, this.ev);
+    this.director.reset(this.session.bank);
+    this.director.setSession(this.session.net());
+    this.director.log("{{K|· · ·}}", "The croupier gathers the chips and deals everyone back in.", this.welcome());
+    await this.persist();
+  }
+
+  private async persist() {
+    const saved = await this.session.save();
+    this.director.setRead(saved.models);
+    this.o.persist?.({ version: 2, session: saved, log: this.director.view.log.slice(-12) });
   }
 
   /** Play exactly one hand (tests use this). */
   async playOne(): Promise<void> {
     const s = this.session, d = this.director;
     d.setPrompt({ mode: "wait", info: "", options: "", feedback: null });
-    const hand = await s.playHand(d, (g) => this.ask(g), (id) => {
-      d.bust(id);
-      d.note(d.narrator.rebuy(id, s.config.stack, s.buyins[id]));
+    const hand = await s.playHand(d, (g) => this.ask(g), (id, place) => {
+      d.eliminate(id, place);
+      d.note(d.narrator.out(id, place, s.ids.length));
     });
+    const alive = s.alive();
+    if (alive.length === 1) d.note(d.narrator.champion(alive[0]));
     d.setStacks(s.bank);
-    const changes = this.moods.update(hand, s.bank, s.v.bigBlind);
+    // the knocked out don't get moods; they've left the table
+    const changes = this.moods.update(hand, s.bank, s.v.bigBlind).filter((c) => !(c.id in s.out));
     for (const c of changes) s.setMood(c.id, c.mood);
     d.moods(changes, (c) => moodLine(d.narrator.who(c.id, true), c));
     d.setSession(s.net());
-    const saved = await s.save();
-    d.setRead(saved.models);
-    this.o.persist?.({ version: 1, session: saved, log: d.view.log.slice(-12) });
+    await this.persist();
   }
 
   stop() {
@@ -138,10 +170,14 @@ export class Game {
   }
 
   private waitForNext(): Promise<void> {
-    const net = this.session.net();
+    const s = this.session, net = s.net();
+    const left = s.alive().length;
+    const where = YOU in s.out ? `you finished {{W|${ordinal(s.out[YOU])}}} of ${s.ids.length}`
+      : left === 1 ? "{{G|you won the tournament}}"
+      : `${left} of ${s.ids.length} left   {{K|·}}   session ${net >= 0 ? "{{G|+" : "{{R|−"}${fmt(Math.abs(net))}}}`;
     this.director.setPrompt({
       mode: "next", info: "", feedback: null,
-      options: `{{W|[enter]}} next hand   {{K|·}}   session ${net >= 0 ? "{{G|+" : "{{R|−"}${Math.abs(net).toLocaleString("en-US")}}}`,
+      options: `{{W|[enter]}} ${s.over ? "new tournament" : "next hand"}   {{K|·}}   ${where}`,
     });
     return new Promise((resolve) => { this.next = () => { this.next = null; resolve(); }; });
   }

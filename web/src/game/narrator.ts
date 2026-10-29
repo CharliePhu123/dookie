@@ -6,6 +6,7 @@ import { Evaluator } from "@/engine/evaluator";
 import type { HandEvent } from "@/engine/events";
 import type { Rng } from "@/engine/rng";
 import type { Variant } from "@/engine/variant";
+import { ordinal } from "@/render/view";
 import { fmt } from "./commands";
 
 type Kind = "fold" | "check" | "call" | "bet" | "raise" | "allin";
@@ -224,9 +225,17 @@ export class Narrator {
     return HAND_WORDS[this.ev.category(this.ev.rank(hole, board))];
   }
 
-  rebuy(p: string, stack: number, n: number): string {
+  /** Someone is out of the tournament, finishing in `place` of `field`. */
+  out(p: string, place: number, field: number): string {
     return p === this.human
-      ? `You're bust. The croupier slides you a fresh stack of {{W|${fmt(stack)}}}. {{K|(buy-in ${n})}}`
-      : `${this.who(p, true)} is bust, and buys back in for {{W|${fmt(stack)}}}.`;
+      ? `You're out of chips. You finish {{W|${ordinal(place)}}} of ${field}.`
+      : `${this.who(p, true)} is out of chips, and leaves the table in {{W|${ordinal(place)}}}.`;
+  }
+
+  /** The last one standing. */
+  champion(p: string): string {
+    return p === this.human
+      ? "{{Y|You}} hold every chip at the table. {{W|You win the tournament.}}"
+      : `${this.who(p, true)} takes the last of the chips and wins the tournament.`;
   }
 }

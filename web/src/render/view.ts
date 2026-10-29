@@ -20,6 +20,8 @@ export interface SeatView {
   tell?: string | null;
   /** "tilted" | "heater" | "wary" | "short": a status mark over the creature */
   mood?: string | null;
+  /** finishing place once out of the tournament; the seat goes dark */
+  out?: number | null;
 }
 
 export interface ReadView {
@@ -110,3 +112,10 @@ export function markup(s: string): Seg[] {
 }
 
 export const fmt = (n: number) => n.toLocaleString("en-US");
+
+/** 1 -> "1st", 2 -> "2nd", 11 -> "11th". */
+export function ordinal(n: number): string {
+  const tens = n % 100, ones = n % 10;
+  const suffix = tens >= 11 && tens <= 13 ? "th" : ones === 1 ? "st" : ones === 2 ? "nd" : ones === 3 ? "rd" : "th";
+  return `${n}${suffix}`;
+}

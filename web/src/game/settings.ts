@@ -31,7 +31,7 @@ export function saveSettings(s: Settings) {
   }
 }
 
-export const HELP = "{{W|c}} call {{K|·}} {{W|x}} check {{K|·}} {{W|f}} fold {{K|·}} {{W|r 300}} raise to 300 {{K|·}} {{W|h}}/{{W|p}}/{{W|a}} half pot, pot, all-in {{K|·}} {{W|?}} odds" +
+export const HELP = "{{W|c}} call {{K|·}} {{W|x}} check {{K|·}} {{W|f}} fold {{K|·}} {{W|r 30}} raise to 30 {{K|·}} {{W|h}}/{{W|p}}/{{W|a}} half pot, pot, all-in {{K|·}} {{W|?}} odds" +
   "  {{K||}}  {{W|speed}} 1/2/4/instant {{K|·}} {{W|sound}} on/off {{K|·}} {{W|volume}} 0-100 {{K|·}} {{W|crt}} on/off {{K|·}} {{W|tab}} the Seer's read {{K|·}} {{W|l}} log";
 
 export type SettingResult = { settings: Settings; message: string } | { help: true } | { error: string } | null;

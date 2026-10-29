@@ -31,6 +31,8 @@ export interface SeatModel {
   tell: string | null;
   /** tilted, on a heater, wary, short-stacked: changes how it plays */
   mood: Mood | null;
+  /** finishing place once out of the tournament (6 = first out of 6), else null */
+  out: number | null;
 }
 
 export interface ReadModel {
@@ -64,7 +66,7 @@ export interface GameView {
   ledger: Ledger;
   prompt: PromptModel;
   read: ReadModel | null;
-  /** your result this session, counting buy-ins */
+  /** your chips against your buy-in */
   session: number;
   /** your best hand right now, in words */
   handName: string | null;
@@ -108,7 +110,7 @@ export class Director implements Presenter {
     this.narrator = new Narrator(v, Object.fromEntries(ids.map((p) => [p, kindOf(p)])), YOU, this.flavor);
     this.view = {
       handNo: 0, blinds: [v.smallBlind, v.bigBlind], street: "", board: [], boardSize: boardSize(v), pot: 0,
-      seats: ids.map((id) => ({ id, kind: kindOf(id), stack: v.startingStack, bet: 0, cards: null, dealer: false, acting: false, allIn: false, won: 0, tell: null, mood: null })),
+      seats: ids.map((id) => ({ id, kind: kindOf(id), stack: v.startingStack, bet: 0, cards: null, dealer: false, acting: false, allIn: false, won: 0, tell: null, mood: null, out: null })),
       log: [], ledger: this.ledger.ledger,
       prompt: { mode: "wait", info: "", options: "", input: "", feedback: null },
       read: null, session: 0, handName: null, toCall: 0, tension: { pot: 0, allIn: false, yourTurn: false },
@@ -180,6 +182,12 @@ export class Director implements Presenter {
     this.changed();
   }
 
+  /** Mark who's already out (a reload mid-tournament). */
+  setOut(out: Record<string, number>) {
+    for (const s of this.view.seats) s.out = out[s.id] ?? null;
+    this.changed();
+  }
+
   setSession(net: number) {
     this.view.session = net;
     this.changed();
@@ -221,9 +229,20 @@ export class Director implements Presenter {
     if (changes.length) this.changed();
   }
 
-  /** A creature busted and bought back in, before the next hand. */
-  bust(id: string) {
+  /** Someone ran out of chips: they crumble and their seat goes dark. */
+  eliminate(id: string, place: number) {
+    Object.assign(this.seat(id), { stack: 0, mood: null, tell: null, out: place });
     this.cue({ kind: "bust", seat: this.seatIndex(id) });
+    this.changed();
+  }
+
+  /** A new tournament with the same creatures: everyone back in with a fresh stack. */
+  reset(bank: Record<string, number>) {
+    const V = this.view;
+    Object.assign(V, { handNo: 0, street: "", board: [], pot: 0, handName: null, toCall: 0 });
+    for (const s of V.seats) {
+      Object.assign(s, { stack: bank[s.id], bet: 0, cards: null, dealer: false, acting: false, allIn: false, won: 0, tell: null, mood: null, out: null });
+    }
     this.changed();
   }
 
@@ -313,6 +332,8 @@ export class Director implements Presenter {
 
   private apply(e: HandEvent, state: HandState) {
     const V = this.view;
+    // seats out of the tournament sit the hand out
+    const seated = V.seats.filter((s) => s.id in state.startStacks);
     switch (e.type) {
       case "hand_start":
         V.handNo = e.handId + 1;
@@ -322,10 +343,10 @@ export class Director implements Presenter {
         for (const s of V.seats) Object.assign(s, { bet: 0, cards: null, dealer: s.id === e.button, acting: false, allIn: false, won: 0, tell: null });
         break;
       case "deal":
-        for (const s of V.seats) s.cards = s.id === YOU ? state.hole[YOU].slice() : new Array(e.holeCards).fill(null);
+        for (const s of seated) s.cards = s.id === YOU ? state.hole[YOU].slice() : new Array(e.holeCards).fill(null);
         break;
       case "blinds":
-        for (const s of V.seats) { s.stack = e.stacks[s.id]; s.bet = e.bets[s.id]; s.allIn = e.stacks[s.id] === 0; }
+        for (const s of seated) { s.stack = e.stacks[s.id]; s.bet = e.bets[s.id]; s.allIn = e.stacks[s.id] === 0; }
         V.pot = e.pot;
         break;
       case "street":
@@ -335,7 +356,7 @@ export class Director implements Presenter {
         break;
       case "action": {
         const s = this.seat(e.player);
-        for (const q of V.seats) { q.stack = e.stacks[q.id]; q.bet = e.bets[q.id]; }
+        for (const q of seated) { q.stack = e.stacks[q.id]; q.bet = e.bets[q.id]; }
         s.acting = false;
         s.allIn = e.allIn;
         // they've acted: stop saying we're waiting on them (think() names the next one)
@@ -350,7 +371,7 @@ export class Director implements Presenter {
         for (const [p, hole] of Object.entries(e.hands)) this.seat(p).cards = hole.slice();
         break;
       case "hand_end":
-        for (const s of V.seats) {
+        for (const s of seated) {
           s.stack = e.stacks[s.id];
           s.bet = 0;
           s.acting = false;
@@ -367,7 +388,7 @@ export class Director implements Presenter {
     const me = V.seats.find((s) => s.id === YOU)!;
     V.handName = me.cards && me.cards[0] !== null && V.board.length >= 3
       ? this.narrator.handName(me.cards as Card[], V.board) : null;
-    const stacks = V.seats.map((s) => s.stack + s.bet);
+    const stacks = V.seats.filter((s) => s.out === null).map((s) => s.stack + s.bet);
     const avg = stacks.reduce((a, b) => a + b, 0) / Math.max(1, stacks.length);
     V.tension = {
       pot: state.done ? 0 : V.pot / Math.max(1, avg),

@@ -1,4 +1,5 @@
-// A sitting at the table: who's playing, their chips between hands, the button, rebuys.
+// A tournament at the table: who's playing, their chips between hands, the button, who's
+// out. No rebuys: bust and you're out, and the last one with chips wins.
 // It runs one hand at a time, asking the bots (through the worker) and the human (through
 // a promise) for decisions, and hands every step's events to a Presenter that paces them.
 import type { Mood } from "@/bots/bot";
@@ -25,16 +26,17 @@ export interface SessionConfig {
 export const DEFAULT_CONFIG: SessionConfig = {
   variant: "holdem",
   opponents: ["adaptive", "simple", "maniac", "nit", "station"],
-  smallBlind: 50,
-  bigBlind: 100,
-  stack: 10_000,
+  smallBlind: 5,
+  bigBlind: 10,
+  stack: 1_000,
   seed: "",
 };
 
 export interface SessionSave {
   config: SessionConfig;
   bank: Record<string, number>;
-  buyins: Record<string, number>;
+  /** finishing place of everyone who's out: 6 = first out of 6 */
+  out: Record<string, number>;
   handNo: number;
   rng: number[];
   /** AdaptiveBot models by seat id: what the Seer has learned about you */
@@ -46,7 +48,7 @@ export interface Presenter {
   present(events: HandEvent[], state: HandState): Promise<void>;
   /** A bot is about to think; resolve after the minimum time it should look like it's thinking. */
   think(id: string): Promise<void>;
-  /** A line for the log that isn't an engine event (rebuys and the like). */
+  /** A line for the log that isn't an engine event (eliminations and the like). */
   note(markup: string): void;
   /** Each live creature's true hand strength (0..1), after the deal and each street: for tells. */
   strengths?(s: Record<string, number>): void;
@@ -71,12 +73,13 @@ export class Session {
   /** seat order around the table; ids[0] is you */
   readonly ids: string[];
   bank: Record<string, number>;
-  buyins: Record<string, number>;
+  out: Record<string, number>;
   handNo: number;
   state: HandState | null = null;
   private rng: Rng;
 
-  constructor(config: SessionConfig, private bots: BotClient, saved?: SessionSave) {
+  /** `saved` resumes a tournament; just `models` starts a new one with the Seer's memory. */
+  constructor(config: SessionConfig, private bots: BotClient, saved?: Partial<SessionSave>) {
     const seed = config.seed || String(Date.now());
     this.config = config = { ...config, seed };
     this.v = variantFor(config);
@@ -84,7 +87,7 @@ export class Session {
     this.rng = new Rng(seed);
     if (saved?.rng) this.rng.restore(saved.rng);
     this.bank = saved?.bank ?? Object.fromEntries(this.ids.map((p) => [p, config.stack]));
-    this.buyins = saved?.buyins ?? Object.fromEntries(this.ids.map((p) => [p, 1]));
+    this.out = saved?.out ?? {};
     this.handNo = saved?.handNo ?? 0;
     const seeds = new Rng(`${seed}/bots`);
     bots.init(this.v, this.ids.filter((p) => p !== YOU).map((id) => ({
@@ -92,30 +95,29 @@ export class Session {
     })));
   }
 
-  /** Your result so far, counting every buy-in. */
+  /** Your result so far against the one buy-in. */
   net(id = YOU): number {
-    return this.bank[id] - this.config.stack * this.buyins[id];
+    return this.bank[id] - this.config.stack;
   }
 
-  /** Rebuy anyone who can't cover the big blind; returns who did. */
-  private rebuys(): string[] {
-    const out: string[] = [];
-    for (const p of this.ids) {
-      if (this.bank[p] < this.v.bigBlind) {
-        this.bank[p] += this.config.stack;
-        this.buyins[p] += 1;
-        out.push(p);
-      }
-    }
-    return out;
+  /** Everyone still in, in seat order. */
+  alive(): string[] {
+    return this.ids.filter((p) => !(p in this.out));
   }
 
-  /** Play one hand to the end. The button moves one seat each hand. */
-  async playHand(show: Presenter, human: HumanInput, onRebuy?: (id: string) => void): Promise<HandState> {
-    for (const p of this.rebuys()) onRebuy?.(p);
+  /** You're out, or you're the last one standing. */
+  get over(): boolean {
+    return YOU in this.out || this.alive().length < 2;
+  }
+
+  /** Play one hand to the end. The button moves one seat each hand, skipping empty seats. */
+  async playHand(show: Presenter, human: HumanInput, onOut?: (id: string, place: number) => void): Promise<HandState> {
     const n = this.ids.length;
-    const b = this.handNo % n;
-    const seats = [...this.ids.slice(b), ...this.ids.slice(0, b)];
+    let b = this.handNo % n;
+    while (this.ids[b] in this.out) b = (b + 1) % n;
+    const live = this.alive();
+    const at = live.indexOf(this.ids[b]);
+    const seats = [...live.slice(at), ...live.slice(0, at)];
     let step = startHand({
       variant: this.v, seats, stacks: { ...this.bank }, deck: shuffledDeck(this.v, this.rng),
       handId: this.handNo, rules: STANDARD_RULES,
@@ -142,6 +144,13 @@ export class Session {
     }
     this.bank = { ...this.bank, ...step.state.stacks };
     this.handNo++;
+    // whoever started the hand with fewer chips finishes lower
+    const busted = seats.filter((p) => this.bank[p] === 0).sort((a, c) => step.state.startStacks[a] - step.state.startStacks[c]);
+    let place = live.length;
+    for (const p of busted) {
+      this.out[p] = place--;
+      onOut?.(p, this.out[p]);
+    }
     return step.state;
   }
 
@@ -156,7 +165,7 @@ export class Session {
 
   async save(): Promise<SessionSave> {
     return {
-      config: this.config, bank: this.bank, buyins: this.buyins, handNo: this.handNo,
+      config: this.config, bank: this.bank, out: this.out, handNo: this.handNo,
       rng: this.rng.state(), models: await this.bots.save(),
     };
   }

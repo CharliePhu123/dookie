@@ -9,7 +9,8 @@ export function loadSave(): GameSave | null {
     const raw = globalThis.localStorage?.getItem(KEY);
     if (!raw) return null;
     const s = JSON.parse(raw) as GameSave;
-    return s?.version === 1 && s.session?.bank ? s : null;
+    // version 1 was a cash game with rebuys and 10x the chips: start fresh
+    return s?.version === 2 && s.session?.bank ? s : null;
   } catch {
     return null;
   }

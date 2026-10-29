@@ -108,7 +108,7 @@ function autoplay(game: Game, rng: Rng) {
 }
 
 describe("game", () => {
-  it("plays hands end to end from typed commands, conserving chips through rebuys", async () => {
+  it("plays hands end to end from typed commands, conserving chips with no rebuys", async () => {
     let saved: GameSave | null = null;
     const rng = new Rng(4);
     let drive = () => {};
@@ -117,13 +117,18 @@ describe("game", () => {
       onChange: () => drive(), persist: (s) => { saved = s; },
     });
     drive = autoplay(game, rng);
-    for (let i = 0; i < 25; i++) await game.playOne();
+    // bust and a new tournament starts; the Seer remembers you across them
+    let tournaments = 1;
+    for (let i = 0; i < 25; i++) {
+      if (game.session.over) { await game.newTournament(); tournaments++; }
+      await game.playOne();
+    }
+    expect(tournaments).toBeGreaterThan(1);
     const s = game.session;
-    expect(s.handNo).toBe(25);
     const total = Object.values(s.bank).reduce((a, b) => a + b, 0);
-    const buyins = Object.values(s.buyins).reduce((a, b) => a + b, 0);
-    expect(total).toBe(2000 * buyins);
+    expect(total).toBe(2000 * s.ids.length);
     for (const seat of game.view.seats) expect(seat.stack).toBe(s.bank[seat.id]);
+    for (const id of s.ids) expect(s.bank[id] === 0).toBe(id in s.out);
     expect(game.view.log.length).toBeGreaterThan(25);
     expect(game.view.read?.hands).toBeGreaterThan(5);
     expect(saved).not.toBeNull();
@@ -131,10 +136,42 @@ describe("game", () => {
 
     // a reload picks up where we left off, and the Seer still knows us
     const again = new Game({ save: saved, bots: BotClient.create({ inline: true }), speed: 0 });
-    expect(again.session.handNo).toBe(25);
+    expect(again.session.handNo).toBe(s.handNo);
     expect(again.session.bank).toEqual(s.bank);
+    expect(again.session.out).toEqual(s.out);
     expect(again.view.read?.hands).toBeCloseTo(game.view.read!.hands, 6);
     again.stop();
+  }, 60_000);
+
+  it("runs a tournament to the end, then deals a new one", async () => {
+    const rng = new Rng(5);
+    let drive = () => {};
+    const game = new Game({
+      config: { seed: "tourney", stack: 150, opponents: ["maniac", "station", "simple"] },
+      bots: BotClient.create({ inline: true }), speed: 0, onChange: () => drive(),
+    });
+    drive = autoplay(game, rng);
+    const s = game.session;
+    for (let i = 0; i < 400 && !s.over; i++) await game.playOne();
+    expect(s.over).toBe(true);
+    // nobody bought back in: the chips that started are all still here, and the busted are out
+    expect(Object.values(s.bank).reduce((a, b) => a + b, 0)).toBe(150 * 4);
+    const alive = s.alive();
+    for (const id of s.ids) expect(s.bank[id] > 0).toBe(alive.includes(id));
+    const places = Object.values(s.out).sort();
+    expect(new Set(places).size).toBe(places.length);
+    for (const p of places) expect(p).toBeGreaterThan(alive.length);
+    for (const seat of game.view.seats) expect(seat.out).toBe(s.out[seat.id] ?? null);
+    expect(game.view.log.some((l) => /out of chips/.test(l))).toBe(true);
+
+    await game.newTournament();
+    expect(game.session).not.toBe(s);
+    expect(game.session.over).toBe(false);
+    expect(game.session.alive()).toHaveLength(4);
+    for (const seat of game.view.seats) expect([seat.stack, seat.out]).toEqual([150, null]);
+    await game.playOne();
+    expect(game.session.handNo).toBe(1);
+    game.stop();
   }, 60_000);
 
   it("explains a bad command without acting", async () => {
