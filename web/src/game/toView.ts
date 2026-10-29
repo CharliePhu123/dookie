@@ -20,7 +20,7 @@ export function toTableView(g: GameView): TableView {
     pot: Math.max(0, g.pot - bets),   // the screen adds this street's bets back
     seats: g.seats.map((s) => ({
       creature: creatureOf(s.id, s.kind), stack: s.stack, bet: s.bet, cards: s.cards,
-      dealer: s.dealer, acting: s.acting, allIn: s.allIn, won: s.won, tell: s.tell, mood: s.mood,
+      dealer: s.dealer, acting: s.acting, allIn: s.allIn, won: s.won, tell: s.tell, mood: s.mood, out: s.out,
     })),
     fx: g.fx,
     // between hands the room breathes out, though the last pot is still on show

@@ -7,7 +7,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalS
 import { RANKS, rankOf, suitOf, type Card } from "@/engine/cards";
 import { makeLayout, type Box, type Layout } from "@/render/layout";
 import { css } from "@/render/palette";
-import { fmt, LEDGER_LEGEND, markup, moodFromView, type LedgerView, type SeatView, type TableView } from "@/render/view";
+import { fmt, LEDGER_LEGEND, markup, moodFromView, ordinal, type LedgerView, type SeatView, type TableView } from "@/render/view";
 import { useFx } from "./useFx";
 import WorldCanvas from "./WorldCanvas";
 
@@ -91,7 +91,8 @@ function Seat({ s, i, L, v }: { s: SeatView; i: number; L: Layout; v: TableView 
   const slot = L.seats[i];
   const you = i === 0;
   const cr = s.creature;
-  const cls = ["seat", you && "you", s.acting && "acting", !s.cards && "folded", s.allIn && "allin",
+  const out = s.out != null;
+  const cls = ["seat", you && "you", s.acting && "acting", !s.cards && "folded", s.allIn && "allin", out && "out",
     slot.anchor.y < L.table.cy ? "above" : "below"].filter(Boolean).join(" ");
   const size = you ? L.bigCard : L.card;
   const toCall = v.toCall ?? 0;
@@ -113,12 +114,12 @@ function Seat({ s, i, L, v }: { s: SeatView; i: number; L: Layout; v: TableView 
         {s.acting && !you && <span className="dots"><i>·</i><i>·</i><i>·</i></span>}
       </div>
       {!L.phone && !you && <div className="seat-title qz">{cr.title}</div>}
-      <div className="seat-stack qz" data-stack><span className="chip">◘</span> {fmt(s.stack)}</div>
+      <div className="seat-stack qz" data-stack>{out ? <>out · {ordinal(s.out!)}</> : <><span className="chip">◘</span> {fmt(s.stack)}</>}</div>
       <Trail cells={v.ledger.rows.find((r) => r.name === cr.name && r.glyph === cr.glyph)?.cells} color={cr.color} />
       {!!s.won && <div className="won qz">+{fmt(s.won)}</div>}
       <div className="cards" data-cards>
         {s.cards ? s.cards.map((c, k) => <CardFace key={k} c={c} size={size} data={{ "data-card": k }} />)
-          : <span className="folded-note qz">folded</span>}
+          : !out && <span className="folded-note qz">folded</span>}
       </div>
       {you && v.handName && (
         <div className="hand-info qz">
@@ -315,8 +316,8 @@ export default function TableScreen({ view: v, fontFamily }: { view: TableView; 
           {v.seats.map((s, i) => (
             <li key={i} className={s.cards ? "" : "out"}>
               <span><span style={{ color: css(s.creature.color) }}>{s.creature.glyph}</span> {s.creature.name}</span>
-              <span className="state">{s.allIn ? "all in" : s.acting ? "to act" : !s.cards ? "folded" : s.dealer ? "dealer" : ""}</span>
-              <span className="stack">{fmt(s.stack)}</span>
+              <span className="state">{s.out != null ? `out · ${ordinal(s.out)}` : s.allIn ? "all in" : s.acting ? "to act" : !s.cards ? "folded" : s.dealer ? "dealer" : ""}</span>
+              <span className="stack">{s.out != null ? "" : fmt(s.stack)}</span>
             </li>
           ))}
         </ul>
