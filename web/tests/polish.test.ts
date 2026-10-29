@@ -7,7 +7,7 @@ import { CALL, FOLD, raise } from "@/engine/game";
 import { Rng } from "@/engine/rng";
 import { decision, playHand, shuffledDeck, startHand, type HandState } from "@/engine/table";
 import { PRESETS, deck as variantDeck } from "@/engine/variant";
-import { Game } from "@/game/game";
+import { Game, type GameSave } from "@/game/game";
 import { MoodTracker, TELLS, tellShows } from "@/game/moods";
 import { DEFAULT_SETTINGS, parseSetting } from "@/game/settings";
 import { BotHost } from "@/worker/host";
@@ -26,6 +26,9 @@ describe("settings", () => {
     expect(parseSetting("volume 40", s)).toMatchObject({ settings: { volume: 0.4 } });
     expect(parseSetting("crt", s)).toMatchObject({ settings: { crt: true } });
     expect(parseSetting("help", s)).toEqual({ help: true });
+    expect(parseSetting("bots 7", s)).toMatchObject({ settings: { bots: 7 } });
+    expect(parseSetting("bots 4", s)).toMatchObject({ settings: { bots: 4 } });
+    for (const bad of ["bots 3", "bots 8", "bots", "bots 5.5"]) expect(parseSetting(bad, s)).toMatchObject({ error: "bots 4-7" });
     for (const cmd of ["c", "f", "r 300", "a", "?", "x", "call"]) expect(parseSetting(cmd, s)).toBeNull();
   });
 
@@ -48,6 +51,40 @@ describe("settings", () => {
     game.key("Enter");
     await hand;
     game.stop();
+  });
+});
+
+describe("table size", () => {
+  it("seats as many creatures as `bots` says, from the next tournament", async () => {
+    const changed: { bots: number }[] = [];
+    const game = new Game({ bots: BotClient.create({ inline: true }), speed: 0, settings: { ...DEFAULT_SETTINGS, bots: 4 }, onSettings: (x) => changed.push(x) });
+    expect(game.session.ids).toEqual(["you", "adaptive", "simple", "maniac", "nit"]);
+    for (const ch of "bots 7") game.key(ch);
+    game.key("Enter");
+    expect(game.view.prompt.feedback).toMatch(/7 creatures from the next tournament/);
+    expect(changed.at(-1)?.bots).toBe(7);
+    expect(game.view.seats).toHaveLength(5);   // not mid-tournament
+    await game.newTournament();
+    expect(game.session.ids).toHaveLength(8);
+    expect(game.view.seats.map((s) => s.id)).toEqual(game.session.ids);
+    expect(game.view.seats.every((s) => s.stack === game.session.config.stack)).toBe(true);
+    expect(game.view.log.some((l) => /7 creatures take their seats/.test(l))).toBe(true);
+    await game.newTournament();   // nothing new asked for: same table
+    expect(game.session.ids).toHaveLength(8);
+    game.stop();
+  });
+
+  it("picks up a size changed while a saved tournament was running", async () => {
+    const first = new Game({ bots: BotClient.create({ inline: true }), speed: 0 });
+    let saved: GameSave | null = null;
+    const again = () => new Game({ save: saved, bots: BotClient.create({ inline: true }), speed: 0, settings: { ...DEFAULT_SETTINGS, bots: 6 } });
+    saved = { version: 2, session: { config: first.session.config, bank: first.session.bank, out: {}, handNo: 3, rng: [1, 2, 3, 4], models: {} }, log: [] };
+    first.stop();
+    const g = again();
+    expect(g.session.ids).toHaveLength(6);   // the saved tournament keeps its five creatures
+    await g.newTournament();
+    expect(g.session.ids).toHaveLength(7);
+    g.stop();
   });
 });
 

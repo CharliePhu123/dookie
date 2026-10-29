@@ -23,9 +23,16 @@ export interface SessionConfig {
   seed: string;
 }
 
+/** Who sits down, in order: a table of n creatures takes the first n. */
+const ROSTER = ["adaptive", "simple", "maniac", "nit", "station", "exploiter", "random"];
+
+export function opponentsFor(n: number): string[] {
+  return ROSTER.slice(0, n);
+}
+
 export const DEFAULT_CONFIG: SessionConfig = {
   variant: "holdem",
-  opponents: ["adaptive", "simple", "maniac", "nit", "station"],
+  opponents: opponentsFor(5),
   smallBlind: 5,
   bigBlind: 10,
   stack: 1_000,
